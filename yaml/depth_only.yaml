@@ -1,0 +1,48 @@
+# ============================================================================
+# ESANet Depth-Only 학습 설정 파일
+# ============================================================================
+
+# 모델 설정
+model:
+  height: 512
+  width: 512
+  encoder: resnet34
+  encoder_block: NonBottleneck1D
+  use_pretrained: true
+  pretrained_path: null
+
+# 데이터 설정
+data:
+  dataset_root: "/home/shinds/my_document/DLFromScratch5/test/vae/sss/dataset"
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+
+# 학습 설정
+training:
+  epochs: 1000
+  batch_size: 4
+  lr: 0.0001
+  scheduler_t_max: 500
+  final_lr: 0.00005
+  loss_type: "silog"  # "silog" or "l1"
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  early_stop_monitor: "val_abs_rel"
+  early_stop_patience: 20
+  early_stop_min_delta: 0.001
+
+# 시스템 설정
+system:
+  precision: "16-mixed"
+  accelerator: "gpu"
+  devices: 1
+  ckpt_path: null
+
+# 시각화 설정
+visualization:
+  vis_dir: ""
+  vis_max: 4
+
+# 출력 설정
+output_dir: "experiments/experiments_depth/reset"

@@ -1,0 +1,40 @@
+model:
+  height: 512
+  width: 512
+  num_classes: 7
+  encoder_rgb: resnet34
+  encoder_depth: resnet34
+  encoder_block: NonBottleneck1D
+  use_pretrained: false
+  pretrained_path: null
+training:
+  epochs: 1000
+  batch_size: 4
+  lr: 0.0001
+  scheduler_t_max: 500
+  final_lr: 0.00005
+  loss_type: silog
+  seg_loss_weight: 1.0
+  depth_loss_weight: 1.0
+  use_uncertainty_weighting: true
+  use_dwa_weighting: false
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  early_stop_monitor: val_abs_rel
+  early_stop_patience: 20
+  early_stop_min_delta: 0.001
+data:
+  dataset_root: ../dataset
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+visualization:
+  vis_dir: ''
+  vis_max: 4
+  save_curves: true
+system:
+  precision: '16-mixed'
+  accelerator: auto
+  devices: auto
+  ckpt_path: null
+output_dir: ./experiments/esanet

@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+# ============================================================================
+# ESANet Multi-Task Model FLOPs Measurement Script
+# ============================================================================
+# 이 스크립트는 ESANet 멀티태스크 모델의 FLOPs(FLoating Point Operations)를 측정합니다.
+# 주요 기능:
+# - ESANet 모델 초기화 및 FLOPs 계산
+# - 세그멘테이션과 깊이 추정 태스크별 FLOPs 분석
+# - 모델 파라미터 수 및 메모리 사용량 측정
+# - 다양한 입력 크기에 대한 FLOPs 비교
+
+import os
+import sys
+import torch
+import torch.nn as nn
+from pathlib import Path
+import time
+from typing import Dict, Tuple, Optional
+
+
+
+# train_esanet_mtl_loss_fixed_print.py에서 실제 사용하는 모델 import
+try:
+    # train_esanet_mtl_loss_fixed_print.py에서 ESANetMultiTask 클래스 import
+    from train_esanet_mtl import ESANetMultiTask
+    ESANET_AVAILABLE = True
+    print("✅ ESANetMultiTask 모델을 성공적으로 import했습니다.")
+except ImportError as e:
+    print(f"❌ ESANetMultiTask 모델 import 실패: {e}")
+    ESANET_AVAILABLE = False
+    sys.exit(1)
+
+# FLOPs 측정을 위한 라이브러리 (fvcore 사용 비활성화: 결과 일관성 위해 thop만 사용)
+FVCORE_AVAILABLE = False
+
+# 대안 FLOPs 측정 라이브러리
+try:
+    import thop
+    THOP_AVAILABLE = True
+    print("✅ thop를 성공적으로 import했습니다.")
+except ImportError:
+    print("⚠️ thop가 설치되지 않았습니다. pip install thop를 실행하세요.")
+    THOP_AVAILABLE = False
+
+# ============================================================================
+# ESANet Multi-Task Model for FLOPs Measurement
+# ============================================================================
+# train_esanet_mtl_loss_fixed_print.py에서 정의된 ESANetMultiTask 클래스를 직접 사용
+
+
+# ============================================================================
+# FLOPs Measurement Functions
+# ============================================================================
+def measure_flops_fvcore(model: nn.Module, input_rgb: torch.Tensor, input_depth: torch.Tensor) -> Dict:
+    """
+    (비활성화) fvcore 사용을 중단했습니다. 일관된 결과 제공을 위해 thop만 사용합니다.
+    """
+    return {"error": "fvcore disabled"}
+
+
+def measure_flops_thop(model: nn.Module, input_rgb: torch.Tensor, input_depth: torch.Tensor) -> Dict:
+    """
+    thop를 사용하여 FLOPs를 측정합니다.
+    
+    Args:
+        model: 측정할 모델
+        input_rgb: RGB 입력 텐서
+        input_depth: Depth 입력 텐서
+        
+    Returns:
+        Dict: FLOPs 측정 결과
+    """
+    if not THOP_AVAILABLE:
+        return {"error": "thop not available"}
+    
+    try:
+        # 모델을 평가 모드로 설정
+        model.eval()
+        
+        # thop는 단일 입력만 지원하므로, RGB와 Depth를 연결하여 처리
+        # 모델 래퍼 클래스 정의
+        class ModelWrapper(nn.Module):
+            def __init__(self, original_model):
+                super().__init__()
+                self.model = original_model
+            
+            def forward(self, x):
+                # RGB와 Depth를 분리
+                rgb = x[:, :3, :, :]
+                depth = x[:, 3:4, :, :]
+                seg_logits, depth_pred = self.model(rgb, depth)
+                return seg_logits, depth_pred
+        
+        # 래퍼 모델 생성
+        wrapper_model = ModelWrapper(model)
+        wrapper_model.eval()
+        
+        # RGB와 Depth를 연결한 입력 생성
+        combined_input = torch.cat([input_rgb, input_depth], dim=1)
+        
+        # FLOPs와 파라미터 수 측정
+        flops, params = thop.profile(wrapper_model, inputs=(combined_input,), verbose=False)
+        
+        return {
+            "total_flops": flops,
+            "total_params": params,
+            "method": "thop"
+        }
+    except Exception as e:
+        return {"error": f"thop measurement failed: {e}"}
+
+
+def measure_model_parameters(model: nn.Module) -> Dict:
+    """
+    모델의 파라미터 수를 측정합니다.
+    
+    Args:
+        model: 측정할 모델
+        
+    Returns:
+        Dict: 파라미터 수 정보
+    """
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    # 모델 크기 계산 (MB)
+    param_size = 0
+    buffer_size = 0
+    
+    for param in model.parameters():
+        param_size += param.nelement() * param.element_size()
+    
+    for buffer in model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+    
+    size_all_mb = (param_size + buffer_size) / 1024**2
+    
+    return {
+        "total_params": total_params,
+        "trainable_params": trainable_params,
+        "model_size_mb": size_all_mb
+    }
+
+
+
+
+# ============================================================================
+# Main FLOPs Measurement Function
+# ============================================================================
+def measure_esanet_flops(
+    height: int = 480,
+    width: int = 640,
+    batch_size: int = 1,
+    num_classes: int = 7,
+    encoder_rgb: str = 'resnet34',
+    encoder_depth: str = 'resnet34',
+    encoder_block: str = 'NonBottleneck1D',
+    pretrained_path: Optional[str] = None,
+    device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
+) -> Dict:
+    """
+    ESANet 멀티태스크 모델의 FLOPs를 측정합니다.
+    
+    Args:
+        height: 입력 이미지 높이
+        width: 입력 이미지 너비
+        batch_size: 배치 크기
+        num_classes: 세그멘테이션 클래스 수
+        encoder_rgb: RGB 인코더 백본
+        encoder_depth: Depth 인코더 백본
+        encoder_block: 인코더 블록 타입
+        pretrained_path: 사전훈련된 가중치 경로
+        device: 계산 디바이스
+        
+    Returns:
+        Dict: FLOPs 측정 결과
+    """
+    print("=" * 80)
+    print("ESANet Multi-Task Model FLOPs Measurement")
+    print("=" * 80)
+    print(f"Input size: {height}x{width}")
+    print(f"Batch size: {batch_size}")
+    print(f"Device: {device}")
+    print("=" * 80)
+    
+    # 디바이스 설정
+    device = torch.device(device)
+    
+    # 모델 초기화 (train_esanet_mtl_loss_fixed_print.py에서 정의된 클래스 사용)
+    print("🔧 Initializing ESANet Multi-Task Model...")
+    model = ESANetMultiTask(
+        height=height,
+        width=width,
+        num_classes=num_classes,
+        encoder_rgb=encoder_rgb,
+        encoder_depth=encoder_depth,
+        encoder_block=encoder_block,
+        pretrained_path=pretrained_path,
+    )
+    
+    # 모델을 디바이스로 이동
+    model = model.to(device)
+    
+    # 입력 텐서 생성
+    print(f"📊 Creating input tensors...")
+    input_rgb = torch.randn(batch_size, 3, height, width, device=device)
+    input_depth = torch.randn(batch_size, 1, height, width, device=device)
+    
+    print(f"RGB input shape: {input_rgb.shape}")
+    print(f"Depth input shape: {input_depth.shape}")
+    
+    # 파라미터 수 측정
+    print("\n📈 Measuring model parameters...")
+    param_info = measure_model_parameters(model)
+    print(f"Total parameters: {param_info['total_params']:,}")
+    print(f"Trainable parameters: {param_info['trainable_params']:,}")
+    print(f"Model size: {param_info['model_size_mb']:.2f} MB")
+    
+    # FLOPs 측정
+    results = {
+        "model_info": {
+            "height": height,
+            "width": width,
+            "batch_size": batch_size,
+            "num_classes": num_classes,
+            "encoder_rgb": encoder_rgb,
+            "encoder_depth": encoder_depth,
+            "encoder_block": encoder_block,
+            "device": str(device)
+        },
+        "parameters": param_info,
+        "flops_measurements": {}
+    }
+    
+    # fvcore 측정 비활성화 (thop만 사용)
+    
+    # thop를 사용한 FLOPs 측정
+    if THOP_AVAILABLE:
+        print("\n🔍 Measuring FLOPs with thop...")
+        thop_result = measure_flops_thop(model, input_rgb, input_depth)
+        if "error" not in thop_result:
+            print(f"Total FLOPs (thop): {thop_result['total_flops']:,}")
+            print(f"Total parameters (thop): {thop_result['total_params']:,}")
+            results["flops_measurements"]["thop"] = thop_result
+        else:
+            print(f"thop measurement failed: {thop_result['error']}")
+    
+    # 결과 요약 (중복 제거)
+    
+    return results
+
+
+# ============================================================================
+# Main Function
+# ============================================================================
+def main():
+    """
+    메인 함수: 512x512 입력 크기로 FLOPs 측정을 수행합니다.
+    """
+    print("🚀 Starting ESANet Multi-Task FLOPs Measurement...")
+    print("📏 Target input size: 512x512 (practical usage)")
+    
+    try:
+        # 실제 사용할 입력 크기로 측정
+        result = measure_esanet_flops(
+            height=512,
+            width=512,
+            batch_size=1,
+            num_classes=7,
+            encoder_rgb='resnet34',
+            encoder_depth='resnet34',
+            encoder_block='NonBottleneck1D',
+            pretrained_path=None,  # 사전훈련 가중치 없이 측정
+            device='cuda' if torch.cuda.is_available() else 'cpu'
+        )
+        
+        # 최종 결과 요약
+        print(f"\n{'='*80}")
+        print("📊 ESANet Multi-Task Model Performance Summary")
+        print(f"{'='*80}")
+        
+        params = result["parameters"]["total_params"]
+        size_mb = result["parameters"]["model_size_mb"]
+        
+        print(f"Input Size: 512x512")
+        print(f"Parameters: {params:,}")
+        print(f"Model Size: {size_mb:.2f} MB")
+        
+        if "thop" in result["flops_measurements"]:
+            macs = result["flops_measurements"]["thop"]["total_flops"]
+            approx_flops = macs * 2
+            print(f"Total MACs (thop): {macs:,}")
+            print(f"Approx FLOPs (~2x MACs): {approx_flops:,}")
+            print(f"MACs per pixel: {macs / (512 * 512):.2f}")
+            print(f"FLOPs per pixel (approx): {approx_flops / (512 * 512):.2f}")
+        
+        print(f"{'='*80}")
+        print("✅ FLOPs measurement completed!")
+        
+    except Exception as e:
+        print(f"❌ Error during measurement: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()

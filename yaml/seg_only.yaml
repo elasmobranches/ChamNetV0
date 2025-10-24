@@ -1,0 +1,49 @@
+# ============================================================================
+# ESANet 세그멘테이션 전용 학습 설정 파일
+# ============================================================================
+# 이 설정 파일은 ESANet 세그멘테이션 전용 학습을 위한 파라미터를 정의합니다.
+# 주요 특징:
+# - 세그멘테이션만 학습 (깊이 추정 헤드 제거)
+# - 불확실성 가중치 없이 단순한 손실 함수 사용
+# - 세그멘테이션 성능 최적화에 집중
+
+model:
+  height: 512
+  width: 512
+  num_classes: 7
+  encoder_rgb: resnet34
+  encoder_depth: resnet34
+  encoder_block: NonBottleneck1D
+  use_pretrained: true
+  pretrained_path: null
+
+training:
+  epochs: 1000
+  batch_size: 4
+  lr: 0.0001
+  scheduler_t_max: 500
+  final_lr: 0.00005
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  early_stop_monitor: val_miou
+  early_stop_patience: 20
+  early_stop_min_delta: 0.001
+
+data:
+  dataset_root: ../dataset
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+
+visualization:
+  vis_dir: ''
+  vis_max: 4
+  save_curves: true
+
+system:
+  precision: '16-mixed'
+  accelerator: auto
+  devices: auto
+  ckpt_path: null
+
+output_dir: ./experiments/experiments_seg/reset
