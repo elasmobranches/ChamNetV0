@@ -1,5 +1,5 @@
 '''python3 /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/infer_models/infer_single_mtl.py \
-  --ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_mtl/esanet_15/esanet-mtl-absrel-epoch=139-val_abs_rel=0.0727.ckpt \
+  --ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_mtl/esanet_ppm_revise_dwa2/esanet-mtl-absrel-epoch=186-val_abs_rel=0.0704.ckpt \
   --rgb /home/shinds/my_document/DLFromScratch5/test/vae/sss/dataset/test/images/20250526_rfv4_frame_000298_00m_09s.jpg \
   --depth /home/shinds/my_document/DLFromScratch5/test/vae/sss/dataset/test/depth/20250526_rfv4_frame_000298_00m_09s_depth.png \
   --height 512 --width 512 --warmup 100'''
@@ -22,7 +22,7 @@ import torchvision.transforms.functional as TF
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 내부 모듈에서 Lightning 모듈 가져오기
-from models.train_esanet_mtl import LightningESANetMTL, get_preprocessing_params
+from models.train_esanet_mtl_dwa import LightningESANetMTL, get_preprocessing_params
 
 
 def _load_rgb_depth(rgb_path: Path, depth_path: Path, width: int, height: int):
@@ -94,7 +94,6 @@ def run_inference(ckpt_path: str, rgb_path: str, depth_path: str,
     fps_std = fps_mean * (std_t / mean_t)
     print(f"Mean latency: {mean_t*1000:.2f} ± {std_t*1000:.2f} ms | FPS: {fps_mean:.2f} ± {fps_std:.2f}")
     
-    return fps_mean, fps_std
 
 
 def main():

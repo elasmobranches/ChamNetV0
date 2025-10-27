@@ -14,7 +14,7 @@ model:
   encoder_rgb: resnet34
   encoder_depth: resnet34
   encoder_block: NonBottleneck1D
-  use_pretrained: true
+  use_pretrained: False
   pretrained_path: null
 
 training:
@@ -46,4 +46,4 @@ system:
   devices: auto
   ckpt_path: null
 
-output_dir: ./experiments/experiments_seg/reset
+output_dir: ./experiments/experiments_seg/1

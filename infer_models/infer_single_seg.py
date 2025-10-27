@@ -1,5 +1,5 @@
 '''python3 /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/infer_models/infer_single_seg.py \
-  --ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_seg/reset/rgb-seg-miou-epoch=53-val_miou=0.7569.ckpt \
+  --ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_seg/1/rgb-seg-miou-epoch=30-val_miou=0.7699.ckpt \
   --rgb /home/shinds/my_document/DLFromScratch5/test/vae/sss/dataset/test/images/20250526_rfv4_frame_000298_00m_09s.jpg\
   --height 512 --width 512 --warmup 100'''
 
@@ -72,7 +72,6 @@ def run_inference(ckpt_path: str, rgb_path: str,
     fps_mean = 1.0 / mean_t
     fps_std = fps_mean * (std_t / mean_t)
     print(f"Mean latency: {mean_t*1000:.2f} ± {std_t*1000:.2f} ms | FPS: {fps_mean:.2f} ± {fps_std:.2f}")
-    return fps_mean, fps_std
     
 
 

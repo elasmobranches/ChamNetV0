@@ -14,13 +14,13 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from typing import Dict, Optional
-
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ============================================================================
 # 실제 학습 코드에서 모델 import
 # ============================================================================
 try:
     # train_esanet_seg_only.py에서 실제 사용하는 모델 import
-    from train_esanet_seg_only import ESANetRGBOnly
+    from models.train_esanet_seg_only import ESANetRGBOnly
     ESANET_AVAILABLE = True
     print("✅ ESANetRGBOnly 모델을 성공적으로 import했습니다.")
 except ImportError as e:
@@ -249,6 +249,7 @@ def main() -> None:
             print(f"\nComputational Complexity:")
             print(f"Total MACs: {macs:,}")
             print(f"Approx FLOPs (~2x MACs): {approx_flops:,}")
+            print(f"Note: FLOPs = MACs * 2는 근사 계산이며, 실제 FLOPs는 activation 등 추가 연산으로 인해 더 클 수 있습니다. (약 2배 더 클 수 있습니다.)")
             print(f"GFLOPs: {gflops:.2f}")
             print(f"\nPer-Pixel Metrics:")
             print(f"MACs per pixel: {macs / (512 * 512):.2f}")

@@ -222,9 +222,16 @@ class ESANetRGBOnly(nn.Module):
         def fix_batchnorm_recursive(module):
             for name, child in module.named_children():
                 if isinstance(child, nn.BatchNorm2d):
-                    num_groups = min(32, child.num_features)
-                    if child.num_features % num_groups != 0:
-                        num_groups = 1
+                    # BatchNorm을 GroupNorm으로 교체 (채널 수에 따른 동적 그룹 수 설정)
+                    num_channels = child.num_features
+                    if num_channels >= 32:
+                        num_groups = 32
+                    elif num_channels >= 16:
+                        num_groups = 16
+                    elif num_channels >= 8:
+                        num_groups = 8
+                    else:
+                        num_groups = max(1, num_channels // 2)  # 최소 2채널당 1그룹
                     
                     group_norm = nn.GroupNorm(num_groups=num_groups, num_channels=child.num_features, 
                                             eps=child.eps, affine=child.affine)
@@ -273,6 +280,15 @@ class ESANetRGBOnly(nn.Module):
             else:
                 print("📝 No compatible weights found, training from scratch...")
                 
+        except FileNotFoundError:
+            print(f"⚠️ Pretrained file not found: {pretrained_path}")
+            print("📝 Training from scratch...")
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                print(f"⚠️ Model architecture mismatch: {e}")
+                print("📝 Training from scratch...")
+            else:
+                raise  # 다른 런타임 에러는 재발생
         except Exception as e:
             print(f"⚠️ Warning: Could not load pretrained weights: {e}")
             print("📝 Training from scratch...")
@@ -455,6 +471,7 @@ class LightningESANetSegOnly(pl.LightningModule):
         if TORCHMETRICS_AVAILABLE:
             self.train_iou = JaccardIndex(task='multiclass', num_classes=num_classes, average='macro')
             self.val_iou = JaccardIndex(task='multiclass', num_classes=num_classes, average='macro')
+            self.test_iou = JaccardIndex(task='multiclass', num_classes=num_classes, average='macro')
         else:
             self._epoch_train_tp = None
             self._epoch_train_fp = None
@@ -616,8 +633,9 @@ class LightningESANetSegOnly(pl.LightningModule):
         total_loss, loss_dict = self._compute_loss(seg_logits, seg_masks)
         metrics = self._compute_metrics(seg_logits.detach(), seg_masks)
         
-        # FPS
-        fps = float(rgb.shape[0]) / float(dt)
+        # FPS - 단일 이미지 기준으로 계산
+        per_image_time = dt / rgb.shape[0]
+        fps = 1.0 / per_image_time
         
         # Logging
         self.log("val_loss", total_loss, prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
@@ -625,8 +643,12 @@ class LightningESANetSegOnly(pl.LightningModule):
         if self._use_dice:
             self.log("val_seg_dice", loss_dict["seg_dice"], prog_bar=False, sync_dist=True)
         self.log("val_seg_ce", loss_dict["seg_ce"], prog_bar=False, sync_dist=True)
-        self.log("val_miou", metrics["miou"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
         self.log("val_fps", fps, prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
+        
+        # torchmetrics를 사용한 IoU 업데이트
+        if TORCHMETRICS_AVAILABLE:
+            seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
+            self.val_iou(seg_pred, seg_masks)
         
         # Accumulate class-wise statistics for epoch-level IoU calculation
         seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
@@ -682,14 +704,20 @@ class LightningESANetSegOnly(pl.LightningModule):
         total_loss, loss_dict = self._compute_loss(seg_logits, seg_masks)
         metrics = self._compute_metrics(seg_logits.detach(), seg_masks)
         
-        fps = float(rgb.shape[0]) / float(dt)
+        # FPS - 단일 이미지 기준으로 계산
+        per_image_time = dt / rgb.shape[0]
+        fps = 1.0 / per_image_time
         
         # Logging
         self.log("test_loss", total_loss, sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_seg_loss", loss_dict["seg"], sync_dist=True, batch_size=rgb.shape[0])
-        self.log("test_miou", metrics["miou"], sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_acc", metrics["seg_acc"], sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_fps", fps, sync_dist=True, batch_size=rgb.shape[0])
+        
+        # torchmetrics를 사용한 IoU 업데이트
+        if TORCHMETRICS_AVAILABLE:
+            seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
+            self.test_iou(seg_pred, seg_masks)
         
         # 클래스별 IoU 집계를 위한 통계 누적
         seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
@@ -713,21 +741,27 @@ class LightningESANetSegOnly(pl.LightningModule):
         return total_loss
 
     def on_test_epoch_end(self) -> None:
-        """테스트 에폭 종료 시 클래스별 IoU를 로그로 기록"""
-        try:
-            if hasattr(self, "_epoch_test_tp") and self._epoch_test_tp is not None:
-                class_names = [
-                    "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
-                ]
-                for i, class_name in enumerate(class_names[: self.num_classes]):
-                    denom = (self._epoch_test_tp[i] + self._epoch_test_fp[i] + self._epoch_test_fn[i])
-                    iou_value = (self._epoch_test_tp[i] / denom) if denom > 0 else torch.tensor(0.0, device=self._epoch_test_tp.device)
-                    self.log(f"test_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
-        finally:
-            if hasattr(self, "_epoch_test_tp") and self._epoch_test_tp is not None:
-                self._epoch_test_tp = None
-                self._epoch_test_fp = None
-                self._epoch_test_fn = None
+        """테스트 에폭 종료 시 정확한 에폭별 mIoU 및 클래스별 IoU 계산"""
+        # torchmetrics를 사용한 정확한 mIoU 계산
+        if TORCHMETRICS_AVAILABLE:
+            epoch_iou = self.test_iou.compute()
+            self.log("test_miou", epoch_iou, prog_bar=True, sync_dist=True)
+            self.test_iou.reset()
+        
+        # 클래스별 IoU 계산 및 로깅
+        if hasattr(self, "_epoch_test_tp") and self._epoch_test_tp is not None:
+            class_names = [
+                "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
+            ]
+            for i, class_name in enumerate(class_names[: self.num_classes]):
+                denom = (self._epoch_test_tp[i] + self._epoch_test_fp[i] + self._epoch_test_fn[i])
+                iou_value = (self._epoch_test_tp[i] / denom) if denom > 0 else torch.tensor(0.0, device=self._epoch_test_tp.device)
+                self.log(f"test_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
+            
+            # Reset accumulators
+            self._epoch_test_tp = None
+            self._epoch_test_fp = None
+            self._epoch_test_fn = None
 
     def on_train_epoch_end(self) -> None:
         if self._train_metrics_accumulator is not None:
@@ -742,17 +776,8 @@ class LightningESANetSegOnly(pl.LightningModule):
         
         if TORCHMETRICS_AVAILABLE:
             epoch_iou = self.train_iou.compute()
-            self.log("train_epoch_iou", epoch_iou, prog_bar=True, sync_dist=True)
+            self.log("train_miou", epoch_iou, prog_bar=True, sync_dist=True)
             self.train_iou.reset()
-        else:
-            if self._epoch_train_tp is not None:
-                class_names = [
-                    "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
-                ]
-                for i, class_name in enumerate(class_names[: self.num_classes]):
-                    denom = (self._epoch_train_tp[i] + self._epoch_train_fp[i] + self._epoch_train_fn[i])
-                    iou_value = (self._epoch_train_tp[i] / denom) if denom > 0 else torch.tensor(0.0)
-                    self.log(f"train_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
 
         if self._epoch_train_tp is not None:
             self._epoch_train_tp.zero_()
@@ -777,23 +802,23 @@ class LightningESANetSegOnly(pl.LightningModule):
         if TORCHMETRICS_AVAILABLE:
             # Compute epoch-level IoU
             epoch_iou = self.val_iou.compute()
-            self.log("val_epoch_iou", epoch_iou, prog_bar=True, sync_dist=True)
+            self.log("val_miou", epoch_iou, prog_bar=True, sync_dist=True)
             # cache for summary print
             try:
                 self._last_val_epoch_iou = float(epoch_iou.detach().cpu().item())
             except Exception:
                 self._last_val_epoch_iou = None
             self.val_iou.reset()
-        else:
-            # Fallback to manual computation
-            if self._epoch_val_tp is not None:
-                class_names = [
-                    "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
-                ]
-                for i, class_name in enumerate(class_names[: self.num_classes]):
-                    denom = (self._epoch_val_tp[i] + self._epoch_val_fp[i] + self._epoch_val_fn[i])
-                    iou_value = (self._epoch_val_tp[i] / denom) if denom > 0 else torch.tensor(0.0)
-                    self.log(f"val_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
+        
+        # 클래스별 IoU 계산 및 로깅 (torchmetrics와 관계없이 항상 실행)
+        if self._epoch_val_tp is not None:
+            class_names = [
+                "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
+            ]
+            for i, class_name in enumerate(class_names[: self.num_classes]):
+                denom = (self._epoch_val_tp[i] + self._epoch_val_fp[i] + self._epoch_val_fn[i])
+                iou_value = (self._epoch_val_tp[i] / denom) if denom > 0 else torch.tensor(0.0, device=self._epoch_val_tp.device)
+                self.log(f"val_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
 
         
         # 로그 출력은 EarlyStopping 콜백(verbose=True)에서 처리됩니다
@@ -893,7 +918,9 @@ class LightningESANetSegOnly(pl.LightningModule):
                 else:
                     out_filename = f"epoch{self.current_epoch:03d}_step{self.global_step:06d}_{i}.png"
                 out_path = os.path.join(self.base_vis_dir, stage, out_filename)
-                Image.fromarray(panel).save(out_path)
+                # 컨텍스트 매니저 사용으로 메모리 누수 방지
+                with Image.fromarray(panel) as img:
+                    img.save(out_path)
                 
         except Exception as e:
             warnings.warn(f"Failed to save visualization: {e}")
@@ -1025,11 +1052,6 @@ def main() -> None:
             cfg_dict = yaml.safe_load(f) or {}
         config = _dict_to_namespace(cfg_dict)
         print(f"✅ Configuration loaded from {cfg_path}")
-    else:
-        with open(cfg_path, 'r', encoding='utf-8') as f:
-            cfg_dict = json.load(f)
-        config = _dict_to_namespace(cfg_dict)
-        print(f"✅ Configuration (JSON) loaded from {cfg_path}")
 
     print(f"📋 Config type: {type(config)}")
     print(f"📋 Dataset root: {getattr(getattr(config, 'data', object()), 'dataset_root', 'N/A')}")

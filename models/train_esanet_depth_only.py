@@ -1,13 +1,3 @@
-# ============================================================================
-# ESANet 깊이 추정 전용 학습 스크립트 (Depth 단일 모달리티)
-# ============================================================================
-# 이 스크립트는 ESANet One Modality 아키텍처를 기반으로 한 깊이 추정 전용 학습을 수행합니다.
-# 주요 기능:
-# - Depth만을 입력으로 받는 ESANet One Modality 아키텍처
-# - 깊이 추정만 학습 (세그멘테이션 헤드 제거)
-# - SILog/L1 손실 함수 지원
-# - PyTorch Lightning을 활용한 효율적인 학습 관리
-
 import argparse
 import json
 import os
@@ -27,9 +17,7 @@ from PIL.Image import Image as PILImage
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
 
-# torchmetrics 라이브러리 import (효율적인 메트릭 계산을 위해)
 try:
     from torchmetrics import MeanSquaredError, MeanAbsoluteError
     TORCHMETRICS_AVAILABLE = True
@@ -39,7 +27,7 @@ except ImportError:
     TORCHMETRICS_AVAILABLE = False
 
 # PyTorch Lightning 관련 import
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, Callback
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 import time
 
@@ -158,9 +146,9 @@ class RGBDepthDataset(Dataset):
 
         # PIL 이미지를 PyTorch 텐서로 변환
         rgb = TF.to_tensor(rgb).contiguous().clone()  # [3, H, W]
-        depth = TF.to_tensor(depth).contiguous().clone()  # [1, H, W]
+        depth = TF.to_tensor(depth).contiguous()  # [1, H, W]
 
-        # 깊이 정규화 (0-1 범위로)
+        # 깊이 정규화 (0-1 범위로) - 이미 contiguous()로 독립적 스토리지 보장됨
         depth = depth.squeeze(0)  # [H, W]로 변환
 
         # RGB 입력으로 Depth 예측
@@ -375,9 +363,16 @@ class ESANetDepthOnly(nn.Module):
         def fix_batchnorm_recursive(module):
             for name, child in module.named_children():
                 if isinstance(child, nn.BatchNorm2d):
-                    num_groups = min(32, child.num_features)
-                    if child.num_features % num_groups != 0:
-                        num_groups = 1
+                    # BatchNorm을 GroupNorm으로 교체 (채널 수에 따른 동적 그룹 수 설정)
+                    num_channels = child.num_features
+                    if num_channels >= 32:
+                        num_groups = 32
+                    elif num_channels >= 16:
+                        num_groups = 16
+                    elif num_channels >= 8:
+                        num_groups = 8
+                    else:
+                        num_groups = max(1, num_channels // 2)  # 최소 2채널당 1그룹
                     
                     group_norm = nn.GroupNorm(num_groups=num_groups, num_channels=child.num_features, 
                                             eps=child.eps, affine=child.affine)
@@ -426,6 +421,15 @@ class ESANetDepthOnly(nn.Module):
             else:
                 print("📝 No compatible weights found, training from scratch...")
                 
+        except FileNotFoundError:
+            print(f"⚠️ Pretrained file not found: {pretrained_path}")
+            print("📝 Training from scratch...")
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                print(f"⚠️ Model architecture mismatch: {e}")
+                print("📝 Training from scratch...")
+            else:
+                raise  # 다른 런타임 에러는 재발생
         except Exception as e:
             print(f"⚠️ Warning: Could not load pretrained weights: {e}")
             print("📝 Training from scratch...")
@@ -462,41 +466,6 @@ class ESANetDepthOnly(nn.Module):
             depth_pred = depth_pred.squeeze(1)
         
         return depth_pred
-
-
-# ============================================================================
-# Custom Early Stopping Callback with Accurate Logging
-# ============================================================================
-class CustomEarlyStopping(EarlyStopping):
-    """
-    정확한 Early Stopping 로그를 출력하는 커스텀 콜백입니다.
-    """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._last_logged_wait_count = -1
-    
-    def on_validation_end(self, trainer, pl_module):
-        """validation 끝에서 정확한 로그 출력"""
-        # EarlyStopping 로직 먼저 실행 (wait_count 업데이트)
-        super().on_validation_end(trainer, pl_module)
-    
-    def on_validation_epoch_end(self, trainer, pl_module):
-        """validation epoch 끝에서 정확한 로그 출력"""
-        # 모든 validation epoch이 끝난 후 로그 출력
-        current_wait = getattr(self, 'wait_count', 0)
-        patience = getattr(self, 'patience', 0)
-        monitor = getattr(self, 'monitor', 'val_loss')
-        
-        # 로그 출력 (tqdm을 사용하여 진행률 표시줄과 함께 출력)
-        from tqdm import tqdm
-        tqdm.write(
-            f"Epoch {trainer.current_epoch:3d}: "
-            f"Val Loss: {trainer.callback_metrics.get('val_loss', 0.0):.4f}, "
-            f"Val AbsRel: {trainer.callback_metrics.get('val_abs_rel', 0.0):.4f} | "
-            f"Early stop({monitor}): {current_wait}/{patience}"
-        )
-        
-        self._last_logged_wait_count = current_wait
 
 
 # ============================================================================
@@ -718,8 +687,9 @@ class LightningESANetDepthOnly(pl.LightningModule):
         total_loss, loss_dict = self._compute_loss(depth_pred, depth_target)
         metrics = self._compute_metrics(depth_pred.detach(), depth_target)
         
-        # FPS
-        fps = float(rgb.shape[0]) / float(dt)
+        # FPS - 단일 이미지 기준으로 계산
+        per_image_time = dt / rgb.shape[0]
+        fps = 1.0 / per_image_time
         
         # Logging
         self.log("val_loss", total_loss, prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
@@ -762,7 +732,9 @@ class LightningESANetDepthOnly(pl.LightningModule):
         total_loss, loss_dict = self._compute_loss(depth_pred, depth_target)
         metrics = self._compute_metrics(depth_pred.detach(), depth_target)
         
-        fps = float(rgb.shape[0]) / float(dt)
+        # FPS - 단일 이미지 기준으로 계산
+        per_image_time = dt / rgb.shape[0]
+        fps = 1.0 / per_image_time
         
         # Logging
         self.log("test_loss", total_loss, sync_dist=True, batch_size=rgb.shape[0])
@@ -936,7 +908,9 @@ class LightningESANetDepthOnly(pl.LightningModule):
                 else:
                     out_filename = f"epoch{self.current_epoch:03d}_step{self.global_step:06d}_{i}_depth.png"
                 out_path = os.path.join(self.base_vis_dir, stage, out_filename)
-                Image.fromarray(panel).save(out_path)
+                # 컨텍스트 매니저 사용으로 메모리 누수 방지
+                with Image.fromarray(panel) as img:
+                    img.save(out_path)
                 
         except Exception as e:
             warnings.warn(f"Failed to save visualization: {e}")
@@ -1065,6 +1039,8 @@ def main() -> None:
         config = _dict_to_namespace(cfg_dict)
         print(f"✅ Configuration loaded from {cfg_path}")
     else:
+        # JSON 폴백 - 주석 손실 경고
+        warnings.warn("JSON config는 주석을 지원하지 않습니다. YAML 사용을 권장합니다.")
         with open(cfg_path, 'r', encoding='utf-8') as f:
             cfg_dict = json.load(f)
         config = _dict_to_namespace(cfg_dict)
@@ -1182,16 +1158,6 @@ def main() -> None:
     es_min_delta = config.training.early_stop_min_delta
     es_mode = 'min' if 'abs_rel' in str(es_monitor).lower() else 'max'
     
-    # 방법 1: CustomEarlyStopping 사용 (정확한 로그)
-    # early_stop = CustomEarlyStopping(
-    #     monitor=es_monitor,
-    #     min_delta=es_min_delta,
-    #     patience=es_patience,
-    #     verbose=False,  # CustomEarlyStopping에서 로그 출력하므로 False
-    #     mode=es_mode,
-    # )
-    
-    # 방법 2: 간단한 해결책 (현재 사용)
     early_stop = EarlyStopping(
         monitor=es_monitor,
         min_delta=es_min_delta,

@@ -17,12 +17,11 @@ from pathlib import Path
 import time
 from typing import Dict, Tuple, Optional
 
-
-
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # train_esanet_mtl_loss_fixed_print.py에서 실제 사용하는 모델 import
 try:
     # train_esanet_mtl_loss_fixed_print.py에서 ESANetMultiTask 클래스 import
-    from train_esanet_mtl import ESANetMultiTask
+    from models.train_esanet_mtl import ESANetMultiTask
     ESANET_AVAILABLE = True
     print("✅ ESANetMultiTask 모델을 성공적으로 import했습니다.")
 except ImportError as e:
@@ -240,6 +239,7 @@ def measure_esanet_flops(
         thop_result = measure_flops_thop(model, input_rgb, input_depth)
         if "error" not in thop_result:
             print(f"Total FLOPs (thop): {thop_result['total_flops']:,}")
+
             print(f"Total parameters (thop): {thop_result['total_params']:,}")
             results["flops_measurements"]["thop"] = thop_result
         else:
@@ -289,8 +289,13 @@ def main():
         if "thop" in result["flops_measurements"]:
             macs = result["flops_measurements"]["thop"]["total_flops"]
             approx_flops = macs * 2
+            gflops = approx_flops / 1e9
+            
+            print(f"\nComputational Complexity:")
             print(f"Total MACs (thop): {macs:,}")
             print(f"Approx FLOPs (~2x MACs): {approx_flops:,}")
+            print(f"Note: FLOPs = MACs * 2는 근사 계산이며, 실제 FLOPs는 activation 등 추가 연산으로 인해 더 클 수 있습니다. (약 2배 더 클 수 있습니다.)")
+            print(f"GFLOPs: {gflops:.2f}")
             print(f"MACs per pixel: {macs / (512 * 512):.2f}")
             print(f"FLOPs per pixel (approx): {approx_flops / (512 * 512):.2f}")
         

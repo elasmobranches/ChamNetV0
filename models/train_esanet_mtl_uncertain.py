@@ -1,14 +1,3 @@
-# ============================================================================
-# ESANet 멀티태스크 학습 스크립트 (세그멘테이션 + 깊이 추정)
-# ============================================================================
-# 이 스크립트는 ESANet 아키텍처를 기반으로 한 멀티태스크 학습을 수행합니다.
-# 주요 기능:
-# - RGB와 Depth를 분리된 입력으로 받는 ESANet 아키텍처
-# - 세그멘테이션과 깊이 추정을 동시에 학습
-# - albumentations를 활용한 고급 데이터 증강
-# - 불확실성 기반 손실 가중치 조정
-# - PyTorch Lightning을 활용한 효율적인 학습 관리
-
 import argparse
 import json
 import os
@@ -17,7 +6,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
 import csv
-from tqdm import tqdm
 
 import numpy as np
 import pytorch_lightning as pl
@@ -30,10 +18,7 @@ import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from torch.utils.data import DataLoader, Dataset
 
-# albumentations 라이브러리 제거됨 (이미 전처리된 데이터셋 사용)
 
-# torchmetrics 라이브러리 import (효율적인 메트릭 계산을 위해)
-# IoU, MSE 등의 메트릭을 GPU에서 효율적으로 계산
 try:
     from torchmetrics import JaccardIndex, MeanSquaredError, MeanAbsoluteError
     TORCHMETRICS_AVAILABLE = True
@@ -47,14 +32,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 import time
 
-# 효율적인 시각화를 위한 torchvision.utils import
-# matplotlib 대신 torchvision을 사용하여 더 빠른 시각화 제공
-try:
-    from torchvision.utils import save_image, make_grid
-    TORCHVISION_UTILS_AVAILABLE = True
-except ImportError:
-    TORCHVISION_UTILS_AVAILABLE = False
-    print("⚠️ torchvision.utils를 사용할 수 없습니다. matplotlib을 사용합니다.")
+# PIL 기반 시각화 사용 (torchvision.utils 제거됨)
 
 # 학습 곡선 저장을 위한 matplotlib import
 import matplotlib.pyplot as plt
@@ -293,9 +271,8 @@ class RGBDepthMultiTaskDataset(Dataset):
         # 깊이 텐서에 채널 차원 추가: [H, W] -> [1, H, W]
         depth_tensor = depth_tensor.unsqueeze(0).contiguous()  # [1, H, W]
         
-        # depth_target이 뷰를 공유하지 않도록 별도 스토리지로 클론
-        # 이는 DataLoader에서 배치 스택 시 메모리 오류를 방지
-        depth_target = depth_tensor.squeeze(0).contiguous().clone()
+        # depth_target은 이미 contiguous()로 독립적 스토리지 보장됨
+        depth_target = depth_tensor.squeeze(0)
 
         return image, depth_tensor, mask, depth_target, img_name  # RGB, Depth, Mask, Depth_target, filename
 
@@ -320,153 +297,6 @@ def get_preprocessing_params(encoder_name: str) -> Tuple[List[float], List[float
     return [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
 
 
-# ============================================================================
-# ASPP + Skip 연결을 활용한 깊이 추정 헤드 안씀
-# ============================================================================
-class DepthHeadWithASPP(nn.Module):
-    """
-    ASPP(Atrous Spatial Pyramid Pooling)와 Skip 연결을 활용한 경량 깊이 추정 헤드입니다.
-    
-    주요 구성 요소:
-    - ASPPModule: 다중 스케일 컨볼루션 + 글로벌 평균 풀링 특징 추출
-    - Skip 경로: 입력 특징을 1x1 컨볼루션으로 축소하여 세밀한 정보 보존
-    - 최종 합성: ASPP 출력과 Skip 특징을 연결 후 3x3 컨볼루션으로 깊이 1채널 예측
-    
-    특징:
-    - 다중 스케일 특징을 효과적으로 융합하여 정확한 깊이 추정
-    - Skip 연결로 세밀한 공간 정보 보존
-    - 출력은 시그모이드 활성화로 [0,1] 범위에 매핑됨
-    """
-    def __init__(self, in_channels: int, out_channels: int, hidden_channels: int = 64):
-        """
-        깊이 추정 헤드 초기화
-        
-        Args:
-            in_channels: 입력 특징 채널 수 (ESANet 백본 출력 채널)
-            out_channels: 출력 채널 수 (깊이 맵은 1채널)
-            hidden_channels: 은닉층 채널 수 (기본값: 64)
-        """
-        super().__init__()
-        
-        # ASPP 모듈: 다중 스케일 특징 추출
-        self.aspp = ASPPModule(in_channels, hidden_channels)
-        
-        # Skip 연결 처리: 입력 특징을 1x1 컨볼루션으로 축소
-        # 세밀한 공간 정보를 보존하기 위해 사용
-        self.skip_conv = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_channels // 2, 1),
-            nn.BatchNorm2d(hidden_channels // 2, track_running_stats=False),
-            nn.ReLU(inplace=True)
-        )
-        
-        # 최종 깊이 예측: ASPP와 Skip 특징을 융합하여 깊이 맵 생성
-        self.depth_conv = nn.Sequential(
-            nn.Conv2d(hidden_channels + hidden_channels // 2, hidden_channels, 3, padding=1),
-            nn.BatchNorm2d(hidden_channels, track_running_stats=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(hidden_channels, hidden_channels // 2, 3, padding=1),
-            nn.BatchNorm2d(hidden_channels // 2, track_running_stats=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(hidden_channels // 2, out_channels, 1)  # 최종 1채널 깊이 맵
-        )
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        순전파 연산
-        
-        Args:
-            x: 입력 특징 텐서 [B, C, H, W]
-            
-        Returns:
-            depth: 깊이 예측 텐서 [B, 1, H, W]
-        """
-        # ASPP 특징 추출: 다중 스케일 정보 융합
-        aspp_features = self.aspp(x)
-        
-        # Skip 연결: 세밀한 공간 정보 보존
-        skip_features = self.skip_conv(x)
-        
-        # ASPP와 Skip 특징 연결: 다중 스케일 + 세밀한 정보
-        combined = torch.cat([aspp_features, skip_features], dim=1)
-        
-        # 최종 깊이 예측: 연결된 특징으로 깊이 맵 생성
-        depth = self.depth_conv(combined)
-        
-        return depth
-
-# 안 씀
-class ASPPModule(nn.Module):
-    """
-    다중 스케일 특징 추출을 위한 단순화된 ASPP(Atrous Spatial Pyramid Pooling) 모듈입니다.
-    
-    주요 특징:
-    - 1x1 컨볼루션: 점별 특징 추출
-    - 3x3 컨볼루션 (dilation=1): 지역적 특징 추출
-    - 글로벌 평균 풀링: 전체 이미지 컨텍스트 정보
-    - 파라미터 수를 통제하여 ESANet 백본 출력 채널(40)과 호환성 유지
-    
-    이 단순화된 구조는 계산 효율성을 높이면서도 다중 스케일 정보를 효과적으로 추출합니다.
-    """
-    def __init__(self, in_channels: int, out_channels: int):
-        """
-        ASPP 모듈 초기화
-        
-        Args:
-            in_channels: 입력 특징 채널 수
-            out_channels: 출력 특징 채널 수
-        """
-        super().__init__()
-        
-        # 단순화된 ASPP: 채널 불일치를 피하기 위해 적은 수의 분기 사용
-        # 1x1 컨볼루션: 점별 특징 추출
-        self.conv1x1 = nn.Conv2d(in_channels, out_channels // 2, 1)
-        
-        # 3x3 컨볼루션: 지역적 특징 추출 (dilation=1로 일반적인 3x3 컨볼루션)
-        self.conv3x3 = nn.Conv2d(in_channels, out_channels // 2, 3, padding=1, dilation=1)
-        
-        # 글로벌 평균 풀링 분기: 전체 이미지 컨텍스트 정보
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.global_conv = nn.Conv2d(in_channels, out_channels // 2, 1)
-        
-        # 최종 융합: 모든 분기의 특징을 연결하고 융합
-        self.fusion_conv = nn.Sequential(
-            nn.Conv2d(out_channels, out_channels, 1),
-            nn.BatchNorm2d(out_channels, track_running_stats=False),
-            nn.ReLU(inplace=True)
-        )
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        ASPP 순전파 연산
-        
-        Args:
-            x: 입력 특징 텐서 [B, C, H, W]
-            
-        Returns:
-            output: 융합된 다중 스케일 특징 [B, out_channels, H, W]
-        """
-        b, c, h, w = x.shape
-        
-        # 다중 스케일 컨볼루션
-        # 1x1 컨볼루션: 점별 특징
-        feat1 = self.conv1x1(x)
-        
-        # 3x3 컨볼루션: 지역적 특징
-        feat2 = self.conv3x3(x)
-        
-        # 글로벌 평균 풀링: 전체 컨텍스트 정보
-        global_feat = self.global_pool(x)  # [B, C, 1, 1]
-        global_feat = self.global_conv(global_feat)  # [B, out_channels//2, 1, 1]
-        # 원본 크기로 복원
-        global_feat = F.interpolate(global_feat, size=(h, w), mode='bilinear', align_corners=False)
-        
-        # 모든 특징 연결: 다중 스케일 정보 융합
-        combined = torch.cat([feat1, feat2, global_feat], dim=1)
-        
-        # 최종 융합: 연결된 특징을 정제하여 출력
-        output = self.fusion_conv(combined)
-        
-        return output
 
 
 # ============================================================================
@@ -624,7 +454,7 @@ class DynamicWeightAverage:
                 else:
                     decrease_rates.append(0.0)
             
-            # 온도를 사용한 Softmax로 가중치 계산
+            # 온도를 사용한 Softmax로 가중치 계산 (LogSumExp 트릭으로 수치 안정성 개선)
             if any(rate > 0 for rate in decrease_rates):
                 # 감소율 정규화
                 max_rate = max(decrease_rates)
@@ -633,13 +463,11 @@ class DynamicWeightAverage:
                 else:
                     normalized_rates = [1.0] * self.num_tasks
                 
-                # 온도 스케일링 적용
-                scaled_rates = [rate / self.temperature for rate in normalized_rates]
-                
-                # Softmax로 가중치 계산
-                exp_rates = [torch.exp(torch.tensor(rate)) for rate in scaled_rates]
-                sum_exp = sum(exp_rates)
-                self.weights = [float(exp_rate / sum_exp) for exp_rate in exp_rates]
+                # 온도 스케일링 적용 및 LogSumExp 트릭 사용
+                scaled_rates = torch.tensor(normalized_rates) / self.temperature
+                max_scaled = scaled_rates.max()
+                exp_rates = torch.exp(scaled_rates - max_scaled)  # 수치 안정성
+                self.weights = (exp_rates / exp_rates.sum()).tolist()
             else:
                 # 감소가 없으면 동일한 가중치 사용
                 self.weights = [1.0 / self.num_tasks] * self.num_tasks
@@ -895,11 +723,16 @@ class ESANetMultiTask(nn.Module):
         def fix_batchnorm_recursive(module):
             for name, child in module.named_children():
                 if isinstance(child, nn.BatchNorm2d):
-                    # BatchNorm을 GroupNorm으로 교체 (적절한 그룹 수로 조정)
-                    # num_groups는 num_channels의 약수여야 하며, 너무 크면 안됨
-                    num_groups = min(32, child.num_features)  # 최대 32개 그룹
-                    if child.num_features % num_groups != 0:
-                        num_groups = 1  # 나누어떨어지지 않으면 1개 그룹 사용
+                    # BatchNorm을 GroupNorm으로 교체 (채널 수에 따른 동적 그룹 수 설정)
+                    num_channels = child.num_features
+                    if num_channels >= 32:
+                        num_groups = 32
+                    elif num_channels >= 16:
+                        num_groups = 16
+                    elif num_channels >= 8:
+                        num_groups = 8
+                    else:
+                        num_groups = max(1, num_channels // 2)  # 최소 2채널당 1그룹
                     
                     group_norm = nn.GroupNorm(num_groups=num_groups, num_channels=child.num_features, 
                                             eps=child.eps, affine=child.affine)
@@ -964,53 +797,19 @@ class ESANetMultiTask(nn.Module):
             else:
                 print("📝 No compatible weights found, training from scratch...")
                 
+        except FileNotFoundError:
+            print(f"⚠️ Pretrained file not found: {pretrained_path}")
+            print("📝 Training from scratch...")
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                print(f"⚠️ Model architecture mismatch: {e}")
+                print("📝 Training from scratch...")
+            else:
+                raise  # 다른 런타임 에러는 재발생
         except Exception as e:
             print(f"⚠️ Warning: Could not load pretrained weights: {e}")
             print("📝 Training from scratch...")
         
-    def _load_pretrained_weights(self, pretrained_path: str):
-        """
-        사전 학습된 가중치 로드 (레거시 메서드)
-        
-        Args:
-            pretrained_path: 사전훈련된 가중치 파일 경로
-        """
-        try:
-            if pretrained_path.endswith('.tar.gz'):
-                import tarfile
-                with tarfile.open(pretrained_path, 'r:gz') as tar:
-                    # tar 파일에서 .pth 파일 추출
-                    for member in tar.getmembers():
-                        if member.name.endswith('.pth'):
-                            # 임시 파일로 추출
-                            import tempfile
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.pth') as tmp_file:
-                                tar.extract(member, path=tempfile.gettempdir())
-                                checkpoint_path = os.path.join(tempfile.gettempdir(), member.name)
-                                break
-            else:
-                checkpoint_path = pretrained_path
-            
-            if checkpoint_path.endswith('.pth'):
-                checkpoint = torch.load(checkpoint_path, map_location='cpu')
-                
-                # 체크포인트 키 매핑 (필요시)
-                if 'model_state_dict' in checkpoint:
-                    state_dict = checkpoint['model_state_dict']
-                elif 'state_dict' in checkpoint:
-                    state_dict = checkpoint['state_dict']
-                else:
-                    state_dict = checkpoint
-                
-                # ESANet 모델에 가중치 로드 (strict=False로 부분 매칭)
-                self.esanet.load_state_dict(state_dict, strict=False)
-                print("✅ Pretrained weights loaded successfully")
-            else:
-                print(f"⚠️ Warning: Unsupported checkpoint format: {checkpoint_path}")
-                
-        except Exception as e:
-            print(f"⚠️ Warning: Could not load pretrained weights: {e}")
-            print("Training from scratch...")
         
     def forward(self, rgb: torch.Tensor, depth: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -1150,7 +949,7 @@ class LightningESANetMTL(pl.LightningModule):
         loss_type: str = "silog",  # "silog" or "l1"
         seg_loss_weight: float = 1.0,
         depth_loss_weight: float = 1.0,
-        use_uncertainty_weighting: bool = True,
+        use_uncertainty_weighting: bool = True ,
         use_dwa_weighting: bool = False,
         save_vis_dir: str = "",
         vis_max: int = 4,
@@ -1236,9 +1035,7 @@ class LightningESANetMTL(pl.LightningModule):
         self.vis_max = int(vis_max) if vis_max is not None else 0
         self.save_root_dir = save_root_dir
         
-        # 최고 성능 추적 (시각화 저장용)
-        self._best_miou = float('-inf')  # 최고 mIoU 추적
-        self._best_absrel = float('inf')  # 최저 AbsRel 추적 (낮을수록 좋음)
+        # 최고 성능 추적은 ModelCheckpoint 콜백에서 처리
         
         # 학습 곡선 저장용 딕셔너리
         self.curves = {
@@ -1273,14 +1070,13 @@ class LightningESANetMTL(pl.LightningModule):
         self._epoch_val_fp = None
         self._epoch_val_fn = None
         
-        # 에폭 메트릭 저장소 초기화
-        self._epoch_train_metrics = []
-        self._epoch_val_metrics = []
+        # 메트릭 누적기는 MetricsAccumulator로 처리
         
         # 효율적인 메트릭 계산을 위한 torchmetrics 설정
         if TORCHMETRICS_AVAILABLE:
             self.train_iou = JaccardIndex(task='multiclass', num_classes=num_classes, average='macro')
             self.val_iou = JaccardIndex(task='multiclass', num_classes=num_classes, average='macro')
+            self.test_iou = JaccardIndex(task='multiclass', num_classes=num_classes, average='macro')
             self.train_mse = MeanSquaredError()
             self.val_mse = MeanSquaredError()
         else:
@@ -1320,6 +1116,24 @@ class LightningESANetMTL(pl.LightningModule):
         )
         # 간단한 에폭 종료 요약 저장 (콘솔 출력용)
         self.logged_metrics = {}
+    
+    def _compute_class_iou(self, tp, fp, fn, prefix=""):
+        """
+        공통 IoU 계산 헬퍼 함수
+        
+        Args:
+            tp: True Positive 텐서 [num_classes]
+            fp: False Positive 텐서 [num_classes] 
+            fn: False Negative 텐서 [num_classes]
+            prefix: 로그 키 접두사 (예: "val", "test")
+        """
+        class_names = [
+            "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
+        ]
+        for i, class_name in enumerate(class_names[: self.num_classes]):
+            denom = (tp[i] + fp[i] + fn[i])
+            iou_value = (tp[i] / denom) if denom > 0 else torch.tensor(0.0, device=tp.device)
+            self.log(f"{prefix}_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
 
     def forward(self, rgb: torch.Tensor, depth: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -1365,19 +1179,26 @@ class LightningESANetMTL(pl.LightningModule):
         depth_loss = self.depth_loss_fn(depth_pred, depth_target)
         
         if self.use_uncertainty_weighting:
-            # 불확실성 기반 가중치: 학습 가능한 로그 분산 파라미터 사용
-            precision_seg = torch.exp(-self.log_var_seg)
-            precision_depth = torch.exp(-self.log_var_depth)
+            # Kendall et al. (CVPR 2018): Multi-Task Learning Using Uncertainty
+            # L = (1/2σ₁²)L₁ + (1/2σ₂²)L₂ + log(σ₁) + log(σ₂)
             
-            weighted_seg_loss = precision_seg * seg_loss + self.log_var_seg
-            weighted_depth_loss = precision_depth * depth_loss + self.log_var_depth
+            # 안정성을 위한 클램핑 (exp 폭발 방지)
+            log_var_seg = torch.clamp(self.log_var_seg, min=-5.0, max=5.0)
+            log_var_depth = torch.clamp(self.log_var_depth, min=-5.0, max=5.0)
+            
+            precision_seg = torch.exp(-log_var_seg)      # 1/σ²
+            precision_depth = torch.exp(-log_var_depth)  # 1/σ²
+            
+            weighted_seg_loss = 0.5 * precision_seg * seg_loss + 0.5 * log_var_seg
+            weighted_depth_loss = 0.5 * precision_depth * depth_loss + 0.5 * log_var_depth
             
             total_loss = weighted_seg_loss + weighted_depth_loss
             
         elif self.use_dwa_weighting:
-            # 동적 가중치 평균 (DWA) 가중치: 손실 감소율 기반 자동 조정
-            current_losses = [float(seg_loss.detach().cpu().item()), 
-                            float(depth_loss.detach().cpu().item())]
+            # Dynamic Weight Average (Liu et al., CVPR 2019)
+            # 손실 감소율 기반 자동 가중치 조정
+            current_losses = [seg_loss.detach().item(), 
+                            depth_loss.detach().item()]
             weights = self.dwa.update_weights(current_losses)
             
             weighted_seg_loss = weights[0] * seg_loss
@@ -1405,6 +1226,9 @@ class LightningESANetMTL(pl.LightningModule):
         if self.use_uncertainty_weighting:
             loss_dict["log_var_seg"] = self.log_var_seg
             loss_dict["log_var_depth"] = self.log_var_depth
+            # 정밀도(불확실성) 값도 로깅
+            loss_dict["precision_seg"] = torch.exp(-torch.clamp(self.log_var_seg, min=-5.0, max=5.0))
+            loss_dict["precision_depth"] = torch.exp(-torch.clamp(self.log_var_depth, min=-5.0, max=5.0))
         elif self.use_dwa_weighting:
             # DWA 가중치 모니터링을 위한 로깅
             weights = self.dwa.get_weights()
@@ -1514,20 +1338,25 @@ class LightningESANetMTL(pl.LightningModule):
         metrics = self._compute_metrics(seg_logits.detach(), depth_pred.detach(), seg_masks, depth_target)
         
         # 메트릭 로깅
-        self.log("train_loss", total_loss, prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
-        self.log("train_seg_loss", loss_dict["seg"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
+        self.log("train_loss", total_loss, prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
+        self.log("train_seg_loss", loss_dict["seg"], prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
         if self._use_dice:
             self.log("train_seg_dice", loss_dict["seg_dice"], prog_bar=False, sync_dist=True)
         self.log("train_seg_ce", loss_dict["seg_ce"], prog_bar=False, sync_dist=True)
-        self.log("train_depth_loss", loss_dict["depth"], prog_bar=True, sync_dist=True)
-        self.log("train_miou", metrics["miou"], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True, batch_size=rgb.shape[0])
-        self.log("train_abs_rel", metrics["abs_rel"], prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
+        self.log("train_depth_loss", loss_dict["depth"], prog_bar=False, sync_dist=True)
+        self.log("train_weighted_seg", loss_dict["weighted_seg"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
+        self.log("train_weighted_depth", loss_dict["weighted_depth"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
         self.log("train_rmse", metrics["rmse"], prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
+        # train_miou는 제거 - train_epoch_iou가 정확한 값
+        self.log("train_abs_rel", metrics["abs_rel"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
+        
         
         # 불확실성 가중치 로깅
         if self.use_uncertainty_weighting:
             self.log("log_var_seg", loss_dict["log_var_seg"], prog_bar=False, sync_dist=True)
             self.log("log_var_depth", loss_dict["log_var_depth"], prog_bar=False, sync_dist=True)
+            self.log("train_weighted_seg", loss_dict["weighted_seg"], prog_bar=True, sync_dist=True)
+            self.log("train_weighted_depth", loss_dict["weighted_depth"], prog_bar=True, sync_dist=True)
         
         # 에폭 레벨 IoU 계산을 위한 클래스별 통계 누적
         seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
@@ -1588,8 +1417,9 @@ class LightningESANetMTL(pl.LightningModule):
         total_loss, loss_dict = self._compute_loss(seg_logits, depth_pred, seg_masks, depth_target)
         metrics = self._compute_metrics(seg_logits.detach(), depth_pred.detach(), seg_masks, depth_target)
         
-        # FPS
-        fps = float(rgb.shape[0]) / float(dt)
+        # FPS - 단일 이미지 기준으로 계산
+        per_image_time = dt / rgb.shape[0]
+        fps = 1.0 / per_image_time
         
         # Logging
         self.log("val_loss", total_loss, prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
@@ -1598,7 +1428,9 @@ class LightningESANetMTL(pl.LightningModule):
             self.log("val_seg_dice", loss_dict["seg_dice"], prog_bar=False, sync_dist=True)
         self.log("val_seg_ce", loss_dict["seg_ce"], prog_bar=False, sync_dist=True)
         self.log("val_depth_loss", loss_dict["depth"], prog_bar=True, sync_dist=True)
-        self.log("val_miou", metrics["miou"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
+        self.log("val_weighted_seg", loss_dict["weighted_seg"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
+        self.log("val_weighted_depth", loss_dict["weighted_depth"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
+        # val_miou는 제거 - val_epoch_iou가 정확한 값
         self.log("val_abs_rel", metrics["abs_rel"], prog_bar=True, sync_dist=True, batch_size=rgb.shape[0])
         self.log("val_sq_rel", metrics["sq_rel"], prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
         self.log("val_rmse", metrics["rmse"], prog_bar=False, sync_dist=True, batch_size=rgb.shape[0])
@@ -1611,6 +1443,11 @@ class LightningESANetMTL(pl.LightningModule):
         if self.use_uncertainty_weighting:
             self.log("val_log_var_seg", loss_dict["log_var_seg"], prog_bar=False, sync_dist=True)
             self.log("val_log_var_depth", loss_dict["log_var_depth"], prog_bar=False, sync_dist=True)
+        
+        # torchmetrics를 사용한 IoU 업데이트 (누적만, 로깅 안함)
+        if TORCHMETRICS_AVAILABLE:
+            seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
+            self.val_iou(seg_pred, seg_masks)
         
         # No validation-stage visual saving
         
@@ -1697,13 +1534,15 @@ class LightningESANetMTL(pl.LightningModule):
         total_loss, loss_dict = self._compute_loss(seg_logits, depth_pred, seg_masks, depth_target)
         metrics = self._compute_metrics(seg_logits.detach(), depth_pred.detach(), seg_masks, depth_target)
         
-        fps = float(rgb.shape[0]) / float(dt)
+        # FPS - 단일 이미지 기준으로 계산
+        per_image_time = dt / rgb.shape[0]
+        fps = 1.0 / per_image_time
         
         # Logging
         self.log("test_loss", total_loss, sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_seg_loss", loss_dict["seg"], sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_depth_loss", loss_dict["depth"], sync_dist=True, batch_size=rgb.shape[0])
-        self.log("test_miou", metrics["miou"], sync_dist=True, batch_size=rgb.shape[0])
+        # test_miou는 제거 - test_epoch_iou가 정확한 값
         self.log("test_abs_rel", metrics["abs_rel"], sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_sq_rel", metrics["sq_rel"], sync_dist=True, batch_size=rgb.shape[0])
         self.log("test_rmse", metrics["rmse"], sync_dist=True, batch_size=rgb.shape[0])
@@ -1717,6 +1556,11 @@ class LightningESANetMTL(pl.LightningModule):
         if self.use_uncertainty_weighting:
             self.log("test_log_var_seg", loss_dict["log_var_seg"], sync_dist=True)
             self.log("test_log_var_depth", loss_dict["log_var_depth"], sync_dist=True)
+        
+        # torchmetrics를 사용한 IoU 업데이트 (누적만, 로깅 안함)
+        if TORCHMETRICS_AVAILABLE:
+            seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
+            self.test_iou(seg_pred, seg_masks)
         
         # 클래스별 IoU 집계를 위한 통계 누적 (테스트 에폭 레벨)
         seg_pred = torch.argmax(torch.softmax(seg_logits.detach(), dim=1), dim=1)
@@ -1740,23 +1584,21 @@ class LightningESANetMTL(pl.LightningModule):
         return total_loss
 
     def on_test_epoch_end(self) -> None:
-        """테스트 에폭 종료 시 클래스별 IoU를 로그로 기록"""
-        try:
-            if hasattr(self, "_epoch_test_tp") and self._epoch_test_tp is not None:
-                class_names = [
-                    "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
-                ]
-                for i, class_name in enumerate(class_names[: self.num_classes]):
-                    denom = (self._epoch_test_tp[i] + self._epoch_test_fp[i] + self._epoch_test_fn[i])
-                    iou_value = (self._epoch_test_tp[i] / denom) if denom > 0 else torch.tensor(0.0, device=self._epoch_test_tp.device)
-                    # on_epoch 집계가 결과에 포함되도록 기록
-                    self.log(f"test_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
-        finally:
-            # 누적기 리셋
-            if hasattr(self, "_epoch_test_tp") and self._epoch_test_tp is not None:
-                self._epoch_test_tp = None
-                self._epoch_test_fp = None
-                self._epoch_test_fn = None
+        """테스트 에폭 종료 시 정확한 에폭별 mIoU 및 클래스별 IoU 계산"""
+        # torchmetrics를 사용한 정확한 mIoU 계산
+        if TORCHMETRICS_AVAILABLE:
+            epoch_iou = self.test_iou.compute()
+            self.log("test_miou", epoch_iou, prog_bar=True, sync_dist=True)
+            self.test_iou.reset()
+        
+        # 클래스별 IoU 계산 및 로깅
+        if hasattr(self, "_epoch_test_tp") and self._epoch_test_tp is not None:
+            self._compute_class_iou(self._epoch_test_tp, self._epoch_test_fp, self._epoch_test_fn, "test")
+            
+            # Reset accumulators
+            self._epoch_test_tp = None
+            self._epoch_test_fp = None
+            self._epoch_test_fn = None
 
     def on_train_epoch_end(self) -> None:
         # Use memory-efficient metrics accumulator
@@ -1774,9 +1616,9 @@ class LightningESANetMTL(pl.LightningModule):
         
         # Log epoch-level metrics using torchmetrics
         if TORCHMETRICS_AVAILABLE:
-            # Compute epoch-level IoU
+            # Compute epoch-level IoU (정확한 에폭 평균)
             epoch_iou = self.train_iou.compute()
-            self.log("train_epoch_iou", epoch_iou, prog_bar=True, sync_dist=True)
+            self.log("train_miou", epoch_iou, prog_bar=True, sync_dist=True)
             self.train_iou.reset()
             
             # Compute epoch-level MSE
@@ -1816,9 +1658,9 @@ class LightningESANetMTL(pl.LightningModule):
         
         # Log epoch-level metrics using torchmetrics
         if TORCHMETRICS_AVAILABLE:
-            # Compute epoch-level IoU
+            # Compute epoch-level IoU (정확한 에폭 평균)
             epoch_iou = self.val_iou.compute()
-            self.log("val_epoch_iou", epoch_iou, prog_bar=True, sync_dist=True)
+            self.log("val_miou", epoch_iou, prog_bar=True, sync_dist=True)
             # cache for summary print
             try:
                 self._last_val_epoch_iou = float(epoch_iou.detach().cpu().item())
@@ -1830,54 +1672,13 @@ class LightningESANetMTL(pl.LightningModule):
             epoch_mse = self.val_mse.compute()
             self.log("val_epoch_mse", epoch_mse, prog_bar=False, sync_dist=True)
             self.val_mse.reset()
-        else:
-            # Fallback to manual computation
-            if self._epoch_val_tp is not None:
-                class_names = [
-                    "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
-                ]
-                for i, class_name in enumerate(class_names[: self.num_classes]):
-                    denom = (self._epoch_val_tp[i] + self._epoch_val_fp[i] + self._epoch_val_fn[i])
-                    iou_value = (self._epoch_val_tp[i] / denom) if denom > 0 else torch.tensor(0.0)
-                    self.log(f"val_class_iou_{class_name}", iou_value, prog_bar=False, sync_dist=True)
+        
+        # 클래스별 IoU 계산 및 로깅 (torchmetrics 사용 여부와 관계없이)
+        if self._epoch_val_tp is not None:
+            self._compute_class_iou(self._epoch_val_tp, self._epoch_val_fp, self._epoch_val_fn, "val")
 
         
-        if not self.trainer.sanity_checking:
-            try:
-                # Use PyTorch Lightning's epoch-averaged mIoU metric
-                val_miou_value = float(self.trainer.callback_metrics.get("val_miou", 0.0))
-                
-                # Use PyTorch Lightning's epoch-averaged metrics instead of last batch values
-                val_abs_rel_value = float(self.trainer.callback_metrics.get("val_abs_rel", 0.0))
-                val_loss_value = float(self.trainer.callback_metrics.get("val_loss", 0.0))
-                
-                # Get early stopping info from actual callback (aligned with config)
-                es_monitor = None
-                early_stop_patience = None
-                early_stop_wait = None
-                es_min_delta = None
-                for callback in getattr(self.trainer, 'callbacks', []):
-                    # Identify EarlyStopping by common attrs
-                    if hasattr(callback, 'patience') and hasattr(callback, 'monitor'):
-                        early_stop_patience = getattr(callback, 'patience', None)
-                        early_stop_wait = getattr(callback, 'wait_count', None)
-                        es_monitor = getattr(callback, 'monitor', None)
-                        es_min_delta = getattr(callback, 'min_delta', None)
-                        break
-                
-                es_wait_str = str(early_stop_wait) if early_stop_wait is not None else "-"
-                es_pat_str = str(early_stop_patience) if early_stop_patience is not None else "-"
-                mon_str = str(es_monitor) if es_monitor is not None else "val_abs_rel"
-                tqdm.write(
-        f"Epoch {self.current_epoch:3d}: "
-        f"Val Loss: {val_loss_value:.4f}, "
-        f"Val mIoU: {val_miou_value:.4f}, "
-        f"Val AbsRel: {val_abs_rel_value:.4f} | "
-        f"Early stop({mon_str}): {es_wait_str}/{es_pat_str}"
-    )
-            except Exception as e:
-                print(f"⚠️ Failed to print epoch summary: {e}")
-                pass
+        # 로그 출력은 CustomEarlyStopping 콜백에서 처리됩니다
 
         # Reset accumulators
         if self._epoch_val_tp is not None:
@@ -2096,63 +1897,14 @@ class LightningESANetMTL(pl.LightningModule):
                 else:
                     out_filename = f"epoch{self.current_epoch:03d}_step{self.global_step:06d}_{i}.png"
                 out_path = os.path.join(self.base_vis_dir, stage, out_filename)
-                Image.fromarray(panel).save(out_path)
+                # 컨텍스트 매니저 사용으로 메모리 누수 방지
+                with Image.fromarray(panel) as img:
+                    img.save(out_path)
                 
         except Exception as e:
             warnings.warn(f"Failed to save PIL visualization: {e}")
     
-    def _seg_to_tensor(self, seg_masks):
-        """Convert segmentation masks to RGB tensors"""
-        batch_size = seg_masks.shape[0]
-        h, w = seg_masks.shape[1], seg_masks.shape[2]
-        
-        # Convert to RGB
-        seg_rgb = torch.zeros(batch_size, 3, h, w, dtype=torch.uint8)
-        pal = self.palette.cpu()
-        
-        for b in range(batch_size):
-            for c in range(min(self.num_classes, pal.shape[0])):
-                mask = (seg_masks[b] == c)
-                if mask.any():
-                    seg_rgb[b, 0, mask] = pal[c, 0]
-                    seg_rgb[b, 1, mask] = pal[c, 1]
-                    seg_rgb[b, 2, mask] = pal[c, 2]
-        
-        return seg_rgb.float() / 255.0
     
-    def _depth_to_tensor(self, depth_maps):
-        """Convert depth maps to RGB tensors using viridis colormap"""
-        batch_size = depth_maps.shape[0]
-        h, w = depth_maps.shape[1], depth_maps.shape[2]
-        
-        depth_rgb = torch.zeros(batch_size, 3, h, w)
-        
-        for b in range(batch_size):
-            depth_np = depth_maps[b].numpy()
-            depth_norm = (depth_np - depth_np.min()) / (depth_np.max() - depth_np.min() + 1e-8)
-            
-            # Viridis colormap implementation
-            depth_colored = np.zeros((h, w, 3), dtype=np.float32)
-            
-            # Blue to green transition (0.0 to 0.5)
-            mask1 = depth_norm <= 0.5
-            if mask1.any():
-                t = depth_norm[mask1] * 2.0
-                depth_colored[mask1, 0] = (68 * (1 - t) + 34 * t) / 255.0
-                depth_colored[mask1, 1] = (1 * (1 - t) + 139 * t) / 255.0
-                depth_colored[mask1, 2] = (84 * (1 - t) + 34 * t) / 255.0
-            
-            # Green to yellow transition (0.5 to 1.0)
-            mask2 = depth_norm > 0.5
-            if mask2.any():
-                t = (depth_norm[mask2] - 0.5) * 2.0
-                depth_colored[mask2, 0] = (34 * (1 - t) + 253 * t) / 255.0
-                depth_colored[mask2, 1] = (139 * (1 - t) + 231 * t) / 255.0
-                depth_colored[mask2, 2] = (34 * (1 - t) + 37 * t) / 255.0
-            
-            depth_rgb[b] = torch.from_numpy(depth_colored).permute(2, 0, 1)
-        
-        return depth_rgb
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=0.01)
@@ -2374,7 +2126,8 @@ def main() -> None:
         config = _dict_to_namespace(cfg_dict)
         print(f"✅ Configuration loaded from {cfg_path}")
     else:
-        # JSON 폴백
+        # JSON 폴백 - 주석 손실 경고
+        warnings.warn("JSON config는 주석을 지원하지 않습니다. YAML 사용을 권장합니다.")
         with open(cfg_path, 'r', encoding='utf-8') as f:
             cfg_dict = json.load(f)
         config = _dict_to_namespace(cfg_dict)
@@ -2527,11 +2280,14 @@ def main() -> None:
             es_mode = 'max'
     except Exception:
         pass
+    
+    
+
     early_stop = EarlyStopping(
         monitor=es_monitor,
         min_delta=es_min_delta,
         patience=es_patience,
-        verbose=False,  # PyTorch Lightning의 기본 메시지 비활성화
+        verbose=True,  # PyTorch Lightning이 직접 로그 출력
         mode=es_mode,
     )
 
@@ -2585,23 +2341,43 @@ def main() -> None:
         "training_time_sec": round(_elapsed_sec, 2),
         "training_time_hms": f"{_elapsed_h:02d}:{_elapsed_m:02d}:{_elapsed_s:02d}",
     }
-    # 클래스별 mIoU를 최종 로그 파일에 함께 저장 (테스트 에폭 누적치를 이용)
+    # 클래스별 mIoU를 최종 로그 파일에 함께 저장 (validation과 test 에폭 누적치를 이용)
     try:
         class_names = [
             "background", "chamoe", "heatpipe", "path", "pillar", "topdownfarm", "unknown"
         ][: model.num_classes]
-        # 테스트가 끝난 직후라면 누적기가 초기화되었을 수 있어, test_results가 없다면 건너뜀
-        # TensorBoard에는 별도로 기록되어 있으므로 실패하더라도 치명적이지 않음
-        test_class_ious = {}
-        if hasattr(model, "_epoch_test_tp") and model._epoch_test_tp is not None:
-            for i, class_name in enumerate(class_names):
-                denom = (model._epoch_test_tp[i] + model._epoch_test_fp[i] + model._epoch_test_fn[i])
-                if float(denom.detach().cpu().item()) > 0.0:
-                    iou_value = (model._epoch_test_tp[i] / denom).detach().cpu().item()
-                else:
-                    iou_value = 0.0
-                test_class_ious[class_name] = iou_value
-        summary["test_class_iou"] = test_class_ious
+        
+        # Validation 클래스별 IoU 계산 비활성화 (필요시 주석 해제)
+        # val_class_ious = {}
+        # try:
+        #     # trainer.callback_metrics에서 클래스별 IoU 가져오기
+        #     for class_name in class_names:
+        #         metric_key = f"val_class_iou_{class_name}"
+        #         if metric_key in trainer.callback_metrics:
+        #             val_class_ious[class_name] = float(trainer.callback_metrics[metric_key].detach().cpu().item())
+        #         else:
+        #             val_class_ious[class_name] = 0.0
+        # except Exception as e:
+        #     print(f"⚠️ Warning: Could not extract validation class IoU from logs: {e}")
+        #     # 폴백: 모든 클래스를 0.0으로 설정
+        #     val_class_ious = {class_name: 0.0 for class_name in class_names}
+        # summary["val_class_iou"] = val_class_ious
+        
+        # Test 클래스별 IoU 계산 비활성화 (필요시 주석 해제)
+        # test_class_ious = {}
+        # try:
+        #     # trainer.callback_metrics에서 클래스별 IoU 가져오기
+        #     for class_name in class_names:
+        #         metric_key = f"test_class_iou_{class_name}"
+        #         if metric_key in trainer.callback_metrics:
+        #             test_class_ious[class_name] = float(trainer.callback_metrics[metric_key].detach().cpu().item())
+        #         else:
+        #             test_class_ious[class_name] = 0.0
+        # except Exception as e:
+        #     print(f"⚠️ Warning: Could not extract test class IoU from logs: {e}")
+        #     # 폴백: 모든 클래스를 0.0으로 설정
+        #     test_class_ious = {class_name: 0.0 for class_name in class_names}
+        # summary["test_class_iou"] = test_class_ious
     except Exception:
         pass
 
@@ -2627,12 +2403,7 @@ def main() -> None:
             for k in test_results[0].keys():
                 if k not in fieldnames:
                     fieldnames.append(f"test::{k}")
-        # 클래스별 IoU도 컬럼으로 추가
-        if "test_class_iou" in summary and isinstance(summary["test_class_iou"], dict):
-            for cls_name in summary["test_class_iou"].keys():
-                col = f"test_class_iou::{cls_name}"
-                if col not in fieldnames:
-                    fieldnames.append(col)
+        # 클래스별 IoU는 제거됨
 
         # 한 줄 기록용 데이터 구성
         row = {
@@ -2647,9 +2418,7 @@ def main() -> None:
         if isinstance(test_results, list) and len(test_results) > 0 and isinstance(test_results[0], dict):
             for k, v in test_results[0].items():
                 row[f"test::{k}"] = v
-        if "test_class_iou" in summary and isinstance(summary["test_class_iou"], dict):
-            for cls_name, iou_val in summary["test_class_iou"].items():
-                row[f"test_class_iou::{cls_name}"] = iou_val
+        # 클래스별 IoU는 제거됨
 
         # CSV 작성 (헤더 포함, 기존 파일 있으면 덮어씀)
         with open(csv_file, "w", newline="", encoding="utf-8") as fcsv:
@@ -2689,12 +2458,17 @@ def main() -> None:
             for k, v in best_val_results[0].items():
                 lines.append(f"  {k}: {v}")
             lines.append("")
+        
+        # 클래스별 IoU는 제거됨
+        
         # Test block
         if isinstance(test_results, list) and len(test_results) > 0 and isinstance(test_results[0], dict):
             lines.append("Test Results:")
             for k, v in test_results[0].items():
                 lines.append(f"  {k}: {v}")
             lines.append("")
+        
+        # Test 클래스별 IoU는 제거됨
         with open(log_file, "w", encoding="utf-8") as flog:
             flog.write("\n".join(lines))
         print(f"🗒️ training.log가 저장되었습니다: {log_file}")
@@ -2704,24 +2478,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# ```Depth Head ASPP + Skip Connections ✅``` 
-# Enhanced CNN with dilated convolutions로 교체
-# Multi-scale feature extraction 구현
-# Dynamic Weight Average (DWA) Loss Weighting ✅
-# Uncertainty weighting 활성화
-# Loss balancing 자동 조정
-# 강화된 Data Augmentation ✅
-# OpenCV 호환성 문제 해결
-# Fallback augmentation으로 안정적 작동
-# 메모리 최적화 - MetricsAccumulator ✅
-# GPU에서 텐서 저장, epoch end에서만 CPU 이동
-# 메모리 효율성 대폭 개선
-# torchmetrics를 사용한 IoU 계산 ✅
-# 효율적인 메트릭 계산
-# 분산 학습 환경 지원
-# 시각화 로직 효율성 ✅
-# torchvision.utils 기반 빠른 시각화
-# matplotlib 의존성 제거
-# Config 관리 개선 ✅
-# OmegaConf 기반 구조화된 설정
-# YAML 파일 지원```

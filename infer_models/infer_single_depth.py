@@ -1,5 +1,5 @@
 '''python3 /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/infer_models/infer_single_depth.py \
-  --ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_depth/reset/depth-abs-rel-epoch=44-val_abs_rel=0.1953.ckpt \
+  --ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_depth/1/depth-abs-rel-epoch=47-val_abs_rel=0.1909.ckpt \
   --rgb /home/shinds/my_document/DLFromScratch5/test/vae/sss/dataset/test/images/20250526_rfv4_frame_000298_00m_09s.jpg \
   --height 512 --width 512 --warmup 100'''
 
@@ -19,8 +19,7 @@ import torchvision.transforms.functional as TF
 # 상위 디렉토리를 sys.path에 추가
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.train_esanet_depth_only import LightningESANetDepthOnly
-from models.train_esanet_mtl import get_preprocessing_params
+from models.train_esanet_depth_only import LightningESANetDepthOnly, get_preprocessing_params
 
 
 def _load_rgb(rgb_path: Path, width: int, height: int):
@@ -72,7 +71,7 @@ def run_inference(ckpt_path: str,   rgb_path: str,
     fps_mean = 1.0 / mean_t
     fps_std = fps_mean * (std_t / mean_t)
     print(f"Mean latency: {mean_t*1000:.2f} ± {std_t*1000:.2f} ms | FPS: {fps_mean:.2f} ± {fps_std:.2f}")
-    return fps_mean, fps_std
+    
     
 
 def main():

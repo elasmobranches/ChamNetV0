@@ -16,8 +16,8 @@ training:
   loss_type: silog
   seg_loss_weight: 1.0
   depth_loss_weight: 1.0
-  use_uncertainty_weighting: true
-  use_dwa_weighting: false
+  use_uncertainty_weighting: false
+  use_dwa_weighting: true
   gradient_clip_val: 1.0
   accumulate_grad_batches: 1
   early_stop_monitor: val_abs_rel
@@ -37,4 +37,4 @@ system:
   accelerator: auto
   devices: auto
   ckpt_path: null
-output_dir: ./experiments/experiments_mtl/esanet_1
+output_dir: ./experiments/experiments_mtl/esanet_ppm_revise_dwa2

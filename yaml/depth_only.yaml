@@ -8,7 +8,7 @@ model:
   width: 512
   encoder: resnet34
   encoder_block: NonBottleneck1D
-  use_pretrained: true
+  use_pretrained: False
   pretrained_path: null
 
 # 데이터 설정
@@ -45,4 +45,4 @@ visualization:
   vis_max: 4
 
 # 출력 설정
-output_dir: "experiments/experiments_depth/reset"
+output_dir: "experiments/experiments_depth/1"

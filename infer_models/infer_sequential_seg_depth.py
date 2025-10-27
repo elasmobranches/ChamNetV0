@@ -1,6 +1,6 @@
 '''python3 /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/infer_models/infer_sequential_seg_depth.py \
-  --seg_ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_seg/reset/rgb-seg-miou-epoch=53-val_miou=0.7569.ckpt \
-  --depth_ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_depth/reset/depth-abs-rel-epoch=44-val_abs_rel=0.1953.ckpt \
+  --seg_ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_seg/1/rgb-seg-miou-epoch=30-val_miou=0.7699.ckpt \
+  --depth_ckpt /home/shinds/my_document/DLFromScratch5/test/vae/sss/mtl_segformer/experiments/experiments_depth/1/depth-abs-rel-epoch=47-val_abs_rel=0.1909.ckpt \
   --rgb /home/shinds/my_document/DLFromScratch5/test/vae/sss/dataset/test/images/20250526_rfv4_frame_000298_00m_09s.jpg \
   --height 512 --width 512 --warmup 100'''
 
@@ -57,10 +57,14 @@ def run_sequential_inference(seg_ckpt_path: str, depth_ckpt_path: str, rgb_path:
     rgb = _load_rgb(Path(rgb_path), width=width, height=height)
     rgb = rgb.unsqueeze(0).to(device)      # [1,3,H,W]
 
-    # Warm-up
-    print("Warming up models...")
+    # 각 모델별로 따로 warm-up
+    print("Warming up segmentation model...")
     for _ in range(max(0, warmup)):
         _ = seg_model(rgb)
+    torch.cuda.synchronize()
+    
+    print("Warming up depth model...")
+    for _ in range(max(0, warmup)):
         _ = depth_model(rgb)
     torch.cuda.synchronize()
 
@@ -133,12 +137,6 @@ def run_sequential_inference(seg_ckpt_path: str, depth_ckpt_path: str, rgb_path:
     print(f"  Overhead: {(seq_mean - seg_mean - depth_mean)*1000:.2f} ms")
     print("="*60)
     
-    return {
-        'seg_fps': seg_fps,
-        'depth_fps': depth_fps,
-        'sequential_fps': seq_fps,
-        'overhead_ms': (seq_mean - seg_mean - depth_mean) * 1000
-    }
 
 
 def main():
