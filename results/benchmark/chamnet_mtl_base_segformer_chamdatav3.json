@@ -1,0 +1,16 @@
+{
+    "config": "/workspace/mmsegmentation/configs/chamnet/chamnet_mtl_base_segformer_chamdatav3.py",
+    "unit": "img / s",
+    "overall_fps_1": 135.85,
+    "overall_fps_2": 129.34,
+    "overall_fps_3": 133.6,
+    "overall_fps_4": 131.76,
+    "overall_fps_5": 133.59,
+    "overall_fps_6": 135.32,
+    "overall_fps_7": 135.03,
+    "overall_fps_8": 129.27,
+    "overall_fps_9": 136.15,
+    "overall_fps_10": 135.56,
+    "average_fps": 133.55,
+    "fps_variance": 6.066
+}

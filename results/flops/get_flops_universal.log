@@ -1,0 +1,97 @@
+12/22 05:30:43 - mmengine - INFO - Loading config: chamnet_mtl_base_segformer_chamdatav3.py
+12/22 05:30:43 - mmengine - INFO - Building model...
+12/22 05:30:45 - mmengine - INFO - Detected model type: mtl
+12/22 05:30:45 - mmengine - INFO - Detected MTL model - using component-wise calculation
+12/22 05:30:45 - mmengine - INFO - Calculating MTL FLOPs manually (component-wise)...
+12/22 05:30:45 - mmengine - INFO -   Calculating backbone FLOPs...
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::div encountered 16 time(s)
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::mul encountered 40 time(s)
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::softmax encountered 8 time(s)
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::add encountered 16 time(s)
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::gelu encountered 8 time(s)
+12/22 05:30:46 - mmengine - WARNING - The following submodules of the model were never called during the trace of the graph. They may be unused, or they were accessed by direct calls to .forward() or via other python methods. In the latter case they will have zeros for statistics, though their statistics will still contribute to their parent calling module.
+layers.0.1.0.attn.attn.out_proj, layers.0.1.0.attn.dropout_layer, layers.0.1.0.ffn.dropout_layer, layers.0.1.1.attn.attn.out_proj, layers.0.1.1.attn.dropout_layer, layers.0.1.1.ffn.dropout_layer, layers.1.1.0.attn.attn.out_proj, layers.1.1.0.attn.dropout_layer, layers.1.1.0.ffn.dropout_layer, layers.1.1.1.attn.attn.out_proj, layers.1.1.1.attn.dropout_layer, layers.1.1.1.ffn.dropout_layer, layers.2.1.0.attn.attn.out_proj, layers.2.1.0.attn.dropout_layer, layers.2.1.0.ffn.dropout_layer, layers.2.1.1.attn.attn.out_proj, layers.2.1.1.attn.dropout_layer, layers.2.1.1.ffn.dropout_layer, layers.3.1.0.attn.attn.out_proj, layers.3.1.0.attn.dropout_layer, layers.3.1.0.ffn.dropout_layer, layers.3.1.1.attn.attn.out_proj, layers.3.1.1.attn.dropout_layer, layers.3.1.1.ffn.dropout_layer
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::layer_norm encountered 30 time(s)
+12/22 05:30:46 - mmengine - INFO -     Backbone: 3.23 GFLOPs
+12/22 05:30:46 - mmengine - INFO -   Calculating seg_decode_head FLOPs...
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::feature_dropout encountered 1 time(s)
+12/22 05:30:46 - mmengine - WARNING - The following submodules of the model were never called during the trace of the graph. They may be unused, or they were accessed by direct calls to .forward() or via other python methods. In the latter case they will have zeros for statistics, though their statistics will still contribute to their parent calling module.
+loss_decode.0, loss_decode.1
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::batch_norm encountered 5 time(s)
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::upsample_bilinear2d encountered 4 time(s)
+12/22 05:30:46 - mmengine - INFO -     Seg Head: 1.26 GFLOPs
+12/22 05:30:46 - mmengine - INFO -   Calculating depth_decode_head FLOPs...
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::mul encountered 2 time(s)
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::sigmoid encountered 1 time(s)
+12/22 05:30:46 - mmengine - WARNING - The following submodules of the model were never called during the trace of the graph. They may be unused, or they were accessed by direct calls to .forward() or via other python methods. In the latter case they will have zeros for statistics, though their statistics will still contribute to their parent calling module.
+gate, gate.0, gate.1, interaction_fusion, interaction_fusion.activate, interaction_fusion.bn, interaction_fusion.conv, loss_decode.0, loss_decode.1
+12/22 05:30:46 - mmengine - WARNING - Unsupported operator aten::upsample_bilinear2d encountered 5 time(s)
+12/22 05:30:46 - mmengine - INFO -     Depth Head: 1.25 GFLOPs
+12/22 05:30:46 - mmengine - INFO -   Total MTL FLOPs: 5.75 GFLOPs
+/workspace/mmsegmentation/mmseg/models/losses/cross_entropy_loss.py:250: UserWarning: Default ``avg_non_ignore`` is False, if you would like to ignore the certain label and average loss over non-ignore labels, which is the same with PyTorch official cross_entropy, set ``avg_non_ignore=True``.
+  warnings.warn(
+/workspace/mmsegmentation/mmseg/models/builder.py:29: UserWarning: ``build_head`` would be deprecated soon, please use ``mmseg.registry.MODELS.build()`` 
+  warnings.warn('``build_head`` would be deprecated soon, please use '
+
+==========================================================================================
+📊 Model Complexity Analysis: chamnet_mtl_base_segformer_chamdatav3.py
+==========================================================================================
+
+📁 Configuration:
+  Config Path:  /workspace/mmsegmentation/configs/chamnet/chamnet_mtl_base_segformer_chamdatav3.py
+  Model Class:  MTLInteractionSegmentor
+  Model Type:   MTL
+  Input Shape:  (3, 512, 512)
+
+------------------------------------------------------------------------------------------
+🔧 Model Components:
+------------------------------------------------------------------------------------------
+Component                      Type                                 Params    Size (MB)
+------------------------------------------------------------------------------------------
+backbone                       MixVisionTransformer                  3.32M        12.66
+decode_head                    InteractionSegformerHead              0.13M         0.51
+seg_decode_head                InteractionSegformerHead              0.13M         0.51
+depth_decode_head              InteractionDepthHead                  0.17M         0.63
+
+------------------------------------------------------------------------------------------
+📦 Model Parameters:
+------------------------------------------------------------------------------------------
+  Total Parameters:                3.62 M  (3,618,409 params)
+  Trainable Parameters:            3.62 M  (3,618,409 params)
+  Non-trainable Params:            0.00 M  (0 params)
+  Parameter Tensors:                199
+  Buffer Tensors:                    35
+
+------------------------------------------------------------------------------------------
+💾 Memory Footprint:
+------------------------------------------------------------------------------------------
+  Parameters:                     13.80 MB
+  Buffers:                         0.01 MB
+  Total Model Size:               13.81 MB
+
+------------------------------------------------------------------------------------------
+⚡ Computational Complexity:
+------------------------------------------------------------------------------------------
+  FLOPs:                         5.747G  (5.75 GFLOPs)
+  GFLOPs:                          5.75
+  GMACs:                           2.87
+  MFLOPs:                       5746.79
+  Calculation Method:      manual_mtl
+
+------------------------------------------------------------------------------------------
+🔍 FLOPs Breakdown (MTL Components):
+------------------------------------------------------------------------------------------
+  backbone                             3.23 GFLOPs  ( 56.3%)
+  seg_decode_head                      1.26 GFLOPs  ( 22.0%)
+  depth_decode_head                    1.25 GFLOPs  ( 21.8%)
+  ------------------------------------------------------------
+  Total (from breakdown)               5.75 GFLOPs
+
+------------------------------------------------------------------------------------------
+📈 Summary:
+------------------------------------------------------------------------------------------
+  Model: 3.62M params, 13.81 MB, 5.75 GFLOPs
+  Efficiency: 0.63 M params/GFLOPs
+
+==========================================================================================
+
