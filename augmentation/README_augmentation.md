@@ -3,6 +3,8 @@
 이 도구는 RGB/Depth 데이터셋을 증강하는 스크립트입니다. MTL(Multi-Task Learning) 학습을 위해 RGB, Mask, Mono Depth, Metric Depth를 동기화하여 증강합니다.
 
 RTX 4090 환경에서 작업하였으나 환경에 크게 의존하지 않습니다. 
+사용하기 전에 depth anything을 이용하여 pseudo depth 전환이 필요합니다.
+증강은 train 폴더만 진행됩니다.
 
 ## 🎯 주요 기능
 
