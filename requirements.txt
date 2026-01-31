@@ -1,0 +1,17 @@
+# ZED ArUco Depth Estimation Requirements
+
+# Core dependencies
+numpy>=1.21.0
+opencv-contrib-python>=4.5.0
+pyyaml>=5.4
+
+# Flask web server
+Flask>=2.0.0
+flask-cors>=3.0.0
+
+# ZED SDK (requires separate installation)
+# Install from: https://www.stereolabs.com/developers/release/
+# pyzed is installed with ZED SDK
+
+# Optional: for better performance
+# opencv-python-headless>=4.5.0  # Use this if you don't need GUI features

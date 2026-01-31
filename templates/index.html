@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZED ArUco Depth Estimation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 ZED ArUco Depth Estimation</h1>
+            <p class="subtitle">ZED 2i 카메라와 ArUco 마커를 이용한 거리 측정 시스템</p>
+        </header>
+
+        <main>
+            <div class="video-section">
+                <div class="video-container">
+                    <img id="videoStream" src="{{ url_for('video_feed') }}" alt="Video Stream">
+                    <div id="markerStatus" class="marker-status">
+                        <span class="status-indicator" id="markerIndicator">●</span>
+                        <span id="markerText">마커 감지 대기 중...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <div class="status-panel">
+                    <h2>📊 측정 상태</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <label>설정 거리:</label>
+                            <span id="currentDistance" class="value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <label>ZED Depth:</label>
+                            <span id="zedDepth" class="value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <label>오차율:</label>
+                            <span id="errorPct" class="value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <label>저장된 프레임:</label>
+                            <span id="savedCount" class="value">0</span>
+                        </div>
+                        <div class="status-item">
+                            <label>측정 모드:</label>
+                            <span id="currentMode" class="value">마커 영역</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="control-panel">
+                    <h2>🎮 제어</h2>
+
+                    <div class="control-group">
+                        <label for="distanceInput">거리 설정 (m):</label>
+                        <div class="input-group">
+                            <input type="number" id="distanceInput" placeholder="예: 1.5" step="0.001" min="0">
+                            <button onclick="setDistance()" class="btn btn-primary">설정</button>
+                        </div>
+                        <small>레이저 측정기로 측정한 실제 거리를 입력하세요</small>
+                    </div>
+
+                    <div class="button-grid">
+                        <button onclick="saveFrame(event)" class="btn btn-success">
+                            💾 프레임 저장
+                        </button>
+                        <button onclick="toggleMode()" class="btn btn-info">
+                            🔄 모드 변경
+                        </button>
+                        <button onclick="downloadCSV()" class="btn btn-warning">
+                            📥 CSV 다운로드
+                        </button>
+                        <button onclick="shutdown()" class="btn btn-danger">
+                            🛑 종료
+                        </button>
+                    </div>
+                </div>
+
+                <div class="keyboard-help">
+                    <h3>⌨️ 키보드 단축키</h3>
+                    <ul>
+                        <li><kbd>D</kbd> - 거리 설정 입력란 포커스</li>
+                        <li><kbd>S</kbd> - 현재 프레임 저장</li>
+                        <li><kbd>M</kbd> - 측정 모드 변경</li>
+                        <li><kbd>Q</kbd> - 종료</li>
+                    </ul>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>© 2024 CV Research Team | ZED Depth Estimation v2.0</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/stream.js') }}"></script>
+</body>
+</html>
