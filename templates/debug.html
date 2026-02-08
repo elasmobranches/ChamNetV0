@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZED 노출 디버깅</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* 디버깅 전용 스타일 추가 */
+        .slider-container {
+            margin: 20px 0;
+        }
+
+        .slider-group {
+            margin-bottom: 25px;
+        }
+
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+
+        .slider {
+            width: 100%;
+            height: 8px;
+            border-radius: 5px;
+            background: #444;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+        }
+
+        .slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: none;
+        }
+
+        .slider:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .mode-indicator {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .mode-auto {
+            background: #fbbf24;
+            color: #1e293b;
+        }
+
+        .mode-manual {
+            background: #10b981;
+            color: white;
+        }
+
+        .stat-box {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .stat-box h3 {
+            margin-top: 0;
+            color: #3b82f6;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .stat-label {
+            color: #9ca3af;
+        }
+
+        .stat-value {
+            color: #e0e0e0;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔧 ZED 노출 디버깅 도구</h1>
+            <p class="subtitle">Auto Exposure 문제 진단 및 수동 조정</p>
+        </header>
+
+        <main>
+            <div class="video-section">
+                <div class="video-container">
+                    <img id="videoStream" src="{{ url_for('video_feed') }}" alt="Video Stream">
+                    <div id="markerStatus" class="marker-status">
+                        <span class="status-indicator" id="markerIndicator">●</span>
+                        <span id="markerText">마커 감지 대기 중...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <!-- 현재 모드 표시 -->
+                <div class="status-panel">
+                    <h2>📊 현재 상태</h2>
+                    <div class="stat-box">
+                        <h3>노출 모드</h3>
+                        <div style="text-align: center; margin: 15px 0;">
+                            <span id="modeIndicator" class="mode-indicator mode-auto">AUTO EXPOSURE</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">현재 노출:</span>
+                            <span class="stat-value" id="currentExposure">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">현재 게인:</span>
+                            <span class="stat-value" id="currentGain">-</span>
+                        </div>
+                    </div>
+
+                    <div class="stat-box">
+                        <h3>밝기 통계</h3>
+                        <div class="stat-row">
+                            <span class="stat-label">현재 밝기:</span>
+                            <span class="stat-value" id="brightnessMean">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">평균 밝기:</span>
+                            <span class="stat-value" id="brightnessAvg">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">표준편차:</span>
+                            <span class="stat-value" id="brightnessStd">-</span>
+                        </div>
+                    </div>
+
+                    <div class="stat-box">
+                        <h3>마커 검출</h3>
+                        <div class="stat-row">
+                            <span class="stat-label">프레임 수:</span>
+                            <span class="stat-value" id="frameCount">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">검출 횟수:</span>
+                            <span class="stat-value" id="detectionCount">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">검출률:</span>
+                            <span class="stat-value" id="detectionRate">0.0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 노출 제어 패널 -->
+                <div class="control-panel">
+                    <h2>🎮 노출 제어</h2>
+
+                    <div class="control-group">
+                        <button onclick="toggleAutoExposure()" class="btn btn-warning" id="toggleBtn" style="width: 100%; margin-bottom: 20px;">
+                            🔄 Manual 모드로 전환
+                        </button>
+                    </div>
+
+                    <div class="slider-container">
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>노출 (Exposure)</span>
+                                <span id="exposureValue">50</span>
+                            </div>
+                            <input type="range" min="0" max="100" value="50" class="slider" id="exposureSlider" disabled>
+                        </div>
+
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>게인 (Gain)</span>
+                                <span id="gainValue">50</span>
+                            </div>
+                            <input type="range" min="0" max="100" value="50" class="slider" id="gainSlider" disabled>
+                        </div>
+
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>밝기 (Brightness)</span>
+                                <span id="brightnessValue">4</span>
+                            </div>
+                            <input type="range" min="0" max="8" value="4" class="slider" id="brightnessSlider">
+                        </div>
+
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>대비 (Contrast)</span>
+                                <span id="contrastValue">4</span>
+                            </div>
+                            <input type="range" min="0" max="8" value="4" class="slider" id="contrastSlider">
+                        </div>
+
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>선명도 (Sharpness)</span>
+                                <span id="sharpnessValue">4</span>
+                            </div>
+                            <input type="range" min="0" max="8" value="4" class="slider" id="sharpnessSlider">
+                        </div>
+                    </div>
+
+                    <div class="button-grid">
+                        <button onclick="resetValues()" class="btn btn-info">
+                            🔄 리셋
+                        </button>
+                        <button onclick="saveSettings()" class="btn btn-success">
+                            💾 설정 저장
+                        </button>
+                        <button onclick="shutdown()" class="btn btn-danger">
+                            🛑 종료
+                        </button>
+                    </div>
+                </div>
+
+                <div class="keyboard-help">
+                    <h3>💡 사용 가이드</h3>
+                    <ul>
+                        <li><strong>Auto 모드:</strong> ZED SDK가 자동으로 노출/게인 조정</li>
+                        <li><strong>Manual 모드:</strong> 슬라이더로 수동 조정 가능</li>
+                        <li><strong>리셋:</strong> 노출=50, 게인=50으로 초기화</li>
+                        <li><strong>설정 저장:</strong> 현재 값을 로그에 권장값으로 기록</li>
+                        <li><strong>목표:</strong> 마커 검출률 90% 이상 달성</li>
+                    </ul>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>© 2024 CV Research Team | ZED Exposure Debugger v1.0</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/debug.js') }}"></script>
+</body>
+</html>

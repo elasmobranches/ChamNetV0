@@ -50,6 +50,29 @@ async function updateStatus() {
         const modeText = data.mode === 'marker_region' ? '마커 영역' : '윈도우';
         document.getElementById('currentMode').textContent = modeText;
 
+        // 마커 크기
+        if (data.marker_size_mm !== null) {
+            document.getElementById('markerSize').textContent = `${data.marker_size_mm} mm`;
+            // 선택된 버튼 하이라이트
+            updateMarkerSizeButtons(data.marker_size_mm);
+        }
+
+        // 마커 위치
+        if (data.marker_center_x !== null && data.marker_center_y !== null) {
+            document.getElementById('markerPosition').textContent =
+                `(${data.marker_center_x}, ${data.marker_center_y})`;
+        } else {
+            document.getElementById('markerPosition').textContent = '-';
+        }
+
+        // 마커 회전 각도
+        if (data.marker_angle !== null) {
+            document.getElementById('markerAngle').textContent =
+                `${data.marker_angle.toFixed(1)}°`;
+        } else {
+            document.getElementById('markerAngle').textContent = '-';
+        }
+
         // 마커 감지 상태
         const indicator = document.getElementById('markerIndicator');
         const markerText = document.getElementById('markerText');
@@ -159,6 +182,42 @@ function showNotification(message, type = 'info') {
     // 예: 화면 우측 상단에 알림 표시
 }
 
+// 마커 크기 설정
+async function setMarkerSize(size) {
+    try {
+        const response = await fetch(`/api/set_marker_size/${size}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            console.log(`마커 크기 설정: ${size}mm`);
+            updateMarkerSizeButtons(size);
+        } else {
+            alert(`오류: ${data.error}`);
+        }
+    } catch (error) {
+        console.error('마커 크기 설정 실패:', error);
+        alert('마커 크기 설정에 실패했습니다.');
+    }
+}
+
+// 마커 크기 버튼 하이라이트 업데이트
+function updateMarkerSizeButtons(selectedSize) {
+    const sizes = [50, 100, 250];
+    sizes.forEach(size => {
+        const btn = document.getElementById(`markerBtn${size}`);
+        if (btn) {
+            if (size === selectedSize) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        }
+    });
+}
+
 // 모드 변경
 async function toggleMode() {
     try {
@@ -215,7 +274,7 @@ async function shutdown() {
 
         if (data.success) {
             // 종료 메시지 표시
-            alert('✅ 프로그램이 종료됩니다.\n\n📁 측정 기록이 CSV 파일로 저장되었습니다.\n📍 위치: data/results/\n\n창을 닫아도 됩니다.');
+            alert('✅ 프로그램이 종료됩니다.\n\n📁 측정 기록이 CSV 파일로 저장되었습니다.\n📍 위치: data/results/{타임스탬프}/\n\n창을 닫아도 됩니다.');
 
             // 페이지를 종료 메시지로 변경
             document.body.innerHTML = `
@@ -224,7 +283,7 @@ async function shutdown() {
                             color: white; font-family: sans-serif;">
                     <h1 style="font-size: 3rem; margin-bottom: 20px;">✅ 종료 완료</h1>
                     <p style="font-size: 1.5rem; margin-bottom: 10px;">측정 기록이 CSV 파일로 저장되었습니다.</p>
-                    <p style="font-size: 1.2rem; color: #9ca3af;">📁 위치: data/results/</p>
+                    <p style="font-size: 1.2rem; color: #9ca3af;">📁 위치: data/results/{타임스탬프}/</p>
                     <p style="font-size: 1rem; color: #6b7280; margin-top: 30px;">이 창을 닫아도 됩니다.</p>
                 </div>
             `;

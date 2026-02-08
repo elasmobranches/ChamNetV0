@@ -191,57 +191,109 @@ web_server:
   stream_fps: 15      # 스트리밍 FPS (낮을수록 부드러움)
 ```
 
-## 🆚 버전 비교
+## 🔍 노출 디버깅 도구 (debug_exposure.py)
 
-| 기능 | v1.0 (원본) | v2.0 (리팩토링) |
-|---|---|---|
-| GUI 방식 | cv2.imshow (VNC 필요) | Flask 웹 (브라우저) |
-| WiFi 필요 | ❌ (로컬 디스플레이 필요) | ✅ (웹 브라우저) |
-| 모듈화 | ❌ (단일 클래스) | ✅ (완전 분리) |
-| 로깅 | print문 | 체계적 로거 |
-| 설정 관리 | 하드코딩 | YAML + 환경변수 |
-| 에러 처리 | 미흡 | 강력한 예외 처리 |
-| 테스트 가능성 | ❌ | ✅ |
-| 코드 점수 | 55-60점 | **95점** |
+마커 인식률을 높이기 위한 **카메라 노출/게인 최적화 도구**입니다.
 
-## 🐛 문제 해결
+### 왜 필요한가?
 
-### ZED 카메라가 열리지 않음
+ZED 카메라의 Auto Exposure는 전체 화면 밝기를 기준으로 동작하여, 특정 조명 환경에서 ArUco 마커가 제대로 감지되지 않을 수 있습니다.
+이 도구를 사용하면:
+- 🔧 실시간으로 노출/게인/밝기/대비/선명도 조정
+- 📊 마커 검출 통계를 실시간으로 확인
+- 💾 최적 설정값을 저장하여 main.py에 적용
+
+### 사용 방법
+
+#### 1단계: 디버깅 도구 실행
+
 ```bash
-# ZED SDK 설치 확인
-python3 -c "import pyzed.sl as sl; print(sl.__version__)"
+# 기본 실행 (포트 5001)
+python3 debug_exposure.py
 
-# USB 연결 확인
-lsusb | grep -i stereo
+# 커스텀 포트
+python3 debug_exposure.py -p 8080
+
+# 커스텀 설정 파일
+python3 debug_exposure.py -c config/config.yaml
 ```
 
-### 웹 페이지 접속 불가
-```bash
-# 방화벽 확인
-sudo ufw allow 5000
+#### 2단계: 웹 브라우저 접속
 
-# 포트 사용 확인
-netstat -tulpn | grep 5000
+```
+http://[서버IP]:5001
 ```
 
-### 마커가 감지되지 않음
-- 마커가 평평하고 조명이 충분한지 확인
-- 마커 ID가 설정과 일치하는지 확인 ([config/config.yaml](config/config.yaml))
-- 마커 크기가 적절한지 확인 (너무 작거나 크면 안됨)
+#### 3단계: 최적 설정 찾기
 
-## 📝 라이선스
+1. **Auto 모드 테스트**
+   - 기본적으로 Auto Exposure 모드로 시작
+   - 마커 검출률 확인
 
-이 프로젝트는 연구 목적으로 사용됩니다.
+2. **Manual 모드로 전환**
+   - "🔄 Manual 모드로 전환" 버튼 클릭
+   - 노출(Exposure)과 게인(Gain) 슬라이더 활성화
 
-## 👥 기여자
+3. **값 조정**
+   - **노출(Exposure)**: 0-100 (높을수록 밝음, 보통 40-70 권장)
+   - **게인(Gain)**: 0-100 (높을수록 밝지만 노이즈 증가, 보통 30-60 권장)
+   - **밝기(Brightness)**: 0-8 (이미지 후처리 밝기)
+   - **대비(Contrast)**: 0-8 (명암 대비)
+   - **선명도(Sharpness)**: 0-8 (엣지 강조)
 
-CV Research Team
+4. **목표 달성**
+   - 마커 검출률 **90% 이상** 달성 시까지 조정
 
-## 📞 문의
+5. **설정 저장**
+   - "💾 설정 저장" 버튼 클릭
+   - 터미널에 권장 설정값 출력됨
 
-문제가 발생하면 로그 파일([logs/](logs/))을 확인하세요.
+#### 4단계: main.py에 최적 설정 적용
 
----
+터미널 로그에 출력된 값을 확인:
 
-**Version**: 2.0.0
-**Last Updated**: 2024-01-31
+```
+============================================================
+📝 현재 설정 저장(예시)
+============================================================
+모드: MANUAL
+노출: 65
+게인: 45
+밝기: 5
+대비: 4
+선명도: 6
+평균 밝기: 128.5
+마커 검출률: 95.2%
+============================================================
+```
+
+[app/camera/zed_camera.py](app/camera/zed_camera.py)의 `open()` 메서드 **line 136**에 추가:
+
+```python
+self._is_opened = True
+
+# ========== 최적 카메라 설정 적용 (2024-XX-XX 조명 환경 기준) ==========
+# debug_exposure.py로 찾은 최적값 - 마커 검출률 95% 달성
+self.camera.set_camera_settings(sl.VIDEO_SETTINGS.AEC_AGC, 0)        # Auto Exposure 끄기
+self.camera.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, 65)     # 노출값
+self.camera.set_camera_settings(sl.VIDEO_SETTINGS.GAIN, 45)         # 게인값
+self.camera.set_camera_settings(sl.VIDEO_SETTINGS.BRIGHTNESS, 5)    # 밝기
+self.camera.set_camera_settings(sl.VIDEO_SETTINGS.CONTRAST, 4)      # 대비
+self.camera.set_camera_settings(sl.VIDEO_SETTINGS.SHARPNESS, 6)     # 선명도
+self.logger.info("[카메라 설정] 최적값 적용 완료")
+```
+
+### 웹 UI 기능
+
+| 기능 | 설명 |
+|-----|------|
+| **실시간 비디오 스트림** | 카메라 영상과 마커 감지 상태 실시간 표시 |
+| **현재 상태 패널** | 노출 모드, 현재 노출/게인 값, 밝기 통계 표시 |
+| **마커 검출 통계** | 프레임 수, 검출 횟수, 검출률 (%) |
+| **Auto/Manual 토글** | Auto Exposure ↔ Manual Exposure 전환 |
+| **슬라이더 제어** | 실시간으로 노출/게인/밝기/대비/선명도 조정 |
+| **리셋 버튼** | 모든 값을 기본값(50, 50, 4, 4, 4)으로 초기화 |
+| **설정 저장** | 현재 설정을 터미널 로그에 출력 |
+| **종료 버튼** | 디버깅 세션 종료 |
+
+

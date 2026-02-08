@@ -48,6 +48,18 @@
                             <label>측정 모드:</label>
                             <span id="currentMode" class="value">마커 영역</span>
                         </div>
+                        <div class="status-item">
+                            <label>마커 크기:</label>
+                            <span id="markerSize" class="value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <label>마커 위치:</label>
+                            <span id="markerPosition" class="value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <label>회전 각도:</label>
+                            <span id="markerAngle" class="value">-</span>
+                        </div>
                     </div>
                 </div>
 
@@ -61,6 +73,16 @@
                             <button onclick="setDistance()" class="btn btn-primary">설정</button>
                         </div>
                         <small>레이저 측정기로 측정한 실제 거리를 입력하세요</small>
+                    </div>
+
+                    <div class="control-group">
+                        <label>마커 크기 (mm):</label>
+                        <div class="marker-size-buttons">
+                            <button onclick="setMarkerSize(50)" class="btn btn-marker" id="markerBtn50">50mm</button>
+                            <button onclick="setMarkerSize(100)" class="btn btn-marker" id="markerBtn100">100mm</button>
+                            <button onclick="setMarkerSize(250)" class="btn btn-marker" id="markerBtn250">250mm</button>
+                        </div>
+                        <small>현재 사용 중인 마커 크기를 선택하세요</small>
                     </div>
 
                     <div class="button-grid">

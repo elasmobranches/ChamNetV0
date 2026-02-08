@@ -1,8 +1,8 @@
 # ZED ArUco Depth Estimation Configuration
 
 # Marker configuration
-marker_id: 30
-marker_size_mm: 100
+marker_id: 0
+marker_size_mm: 250
 aruco_dict: DICT_4X4_50
 
 # Experimental distances (meters)
@@ -16,8 +16,8 @@ zed_settings:
   fps: 30
   depth_minimum_distance: 200      # mm
   depth_maximum_distance: 20000    # mm
-  confidence_threshold: 0
-  texture_confidence_threshold: 0
+  confidence_threshold: 100
+  texture_confidence_threshold: 100
   enable_fill_mode: true
   depth_stabilization: 1
 
