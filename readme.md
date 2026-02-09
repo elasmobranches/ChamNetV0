@@ -1,13 +1,10 @@
 # ChamNet: 사족보행로봇의 온실 환경 주행을 위한 멀티태스크 러닝 기반 의미론적 분할 및 깊이 추정 연구
 
-##  3080 - model branch , aruco -  아루코 탐지 및 깊이 측정 branch , orin - SVO 녹화 및 추론 branch, data_processor - 전처리 브랜치 
-
-
-## MMSegmentation과 MMDeploy 기반의 농업 환경에서 의미론적 분할(Semantic Segmentation)과 깊이 추정(Depth Estimation)을 동시에 수행하는 Multi-Task Learning 프레임워크입니다.
+### 3080 - model branch , aruco -  아루코 탐지 및 깊이 측정 branch , orin - SVO 녹화 및 추론 branch, data_processor - 전처리 브랜치 
 
 ## 개요
 
-이 저장소는 농업 이미지에서 의미론적 분할(7개 클래스)과 단안 깊이 추정을 공동으로 수행하는 MTL 모델의 학습, 평가, 배포를 위한 완전한 파이프라인을 제공합니다. SegFormer (MiT-B0)를 공유 백본으로 사용하며 태스크별 상호작용 헤드를 통해 특징을 공유합니다.
+이 저장소는 MMSegmentation과 MMDeploy 기반의 농업 환경에서 의미론적 분할(Semantic Segmentation)과 깊이 추정(Depth Estimation)을 동시에 수행하는 Multi-Task Learning 프레임워크입니다.
 
 ### 주요 기능
 
