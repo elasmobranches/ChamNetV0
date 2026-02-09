@@ -36,7 +36,7 @@
 | :--- | :--- |
 | **`web_stream.py`** | 웹 브라우저(IP:5000)로 Seg + Depth 원격 관제. |
 | **`drive_recorder.py`** | Seg + Depth 합친 영상을 AVI로 녹화. |
-| **`hybrid_stream.py`** | **[추천]** 웹 스트리밍 + RGB/Depth NPY 저장. 연구 데이터 수집용. |
+| **`hybrid_stream.py`** |  웹 스트리밍 + RGB/Depth NPY 저장. 연구 데이터 수집용. |
 
 ---
 
@@ -60,93 +60,13 @@
 
 ---
 
-## 📐 기술 노트: 해상도 설정 (Resolution Settings)
 
 ZED 2i 카메라는 **Stereo(좌/우 합쳐진)** 영상을 송출합니다.
 
 | 단계 | 해상도 | 설명 |
 | :--- | :--- | :--- |
-| 입력 (Input) | `2560 x 720` | ZED HD720 Side-by-Side 형식 |
+| 입력 (Input) | `2560 x 720` | ZED HD1080 Side-by-Side 형식 |
 | 전처리 (Crop) | `1280 x 720` | `frame[:, :1280]` 왼쪽 눈만 사용 |
 | 모델 입력 | `512 x 512` | 내부 리사이즈 |
 | 녹화 (Seg+Depth) | `2560 x 720` | 좌: Seg, 우: Depth |
 
----
-
-## 🚀 실행 방법 (Usage)
-
-### 1. 환경 진입 (Docker)
-```bash
-cd ~/model/jetson-containers
-./run.sh $(./autotag pytorch) bash
-```
-
-### 2. 테스트 실행
-```bash
-# 순수 추론 속도 테스트 (GUI 없음)
-python /data/test/headless.py
-
-# 웹 스트리밍 (브라우저에서 http://<ORIN_IP>:5000 접속)
-python /data/test/web_stream.py
-
-# 연구용 데이터 수집 (RGB + Depth NPY 저장)
-python /data/test/hybrid_stream.py
-```
-
-### 3. 저장 데이터 구조 (hybrid_stream.py)
-```
-/data/recordings/20260114_160000/
-├── rgb/
-│   ├── 000000.png
-│   └── ...
-├── pred_depth/
-│   ├── 000000.npy      # float32, 미터 단위
-│   └── ...
-├── pred_seg/
-│   ├── 000000.npy      # uint8, 클래스 인덱스
-│   └── ...
-└── meta.npy            # 총 프레임 수, 타임스탬프
-```
-
----
-
-## ⚡ 성능 (Performance on AGX Orin 64GB)
-
-| 항목 | 수치 |
-| :--- | :--- |
-| 순수 GPU 추론 | **~98 FPS** |
-| 카메라 포함 루프 | **~30 FPS** |
-| 웹 스트리밍 | **~12 FPS** |
-| 추론 지연시간 | **~10 ms** |
-
----
-
-## 🔧 트러블슈팅 (Troubleshooting)
-
-### OOM (Out of Memory) 에러
-```bash
-# 이전 프로세스가 GPU 메모리 점유 중일 수 있음
-pkill -9 python
-python /data/test/headless.py
-```
-
-### 카메라 연결 실패
-```bash
-# USB 뺐다 다시 꽂기 또는:
-sudo udevadm trigger
-```
-
-### Docker 안에서 카메라 안 잡힘
-```bash
-# 컨테이너 나갔다 다시 실행
-exit
-./run.sh $(./autotag pytorch) bash
-```
-
----
-
-## 📝 참고사항
-
-- TensorRT 엔진은 **빌드 환경과 실행 환경이 동일**해야 합니다.
-- Docker 안에서 빌드한 `.engine` 파일은 Docker 안에서만 실행 가능합니다.
-- ZED SDK는 현재 Docker 이미지에 미포함. SVO 녹화가 필요하면 Host에서 별도 실행하세요.
