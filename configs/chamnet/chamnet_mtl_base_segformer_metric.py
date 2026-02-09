@@ -9,7 +9,7 @@
 _base_ = [
     '../_base_/default_runtime.py',
     '../_base_/schedules/schedule_30m.py',  # MTL 전용 schedule
-    '../_base_/datasets/chamdata_mtl.py'     # MTL 전용 dataset
+    '../_base_/datasets/chamdata_mtl_met.py'     # MTL 전용 dataset
 ]
 
 # Custom MTL hooks 및 모듈 import
@@ -134,20 +134,15 @@ model = dict(
     num_classes=1,
     norm_cfg=norm_cfg,
     align_corners=False,
+    min_depth=0.1,
+    max_depth=10.0,
     loss_decode=[
-    dict(
-        type='SILogLoss',
-        loss_weight=1.0,
-        loss_name='loss_depth_silog',
-        lambda_variance=0.85,
-    ),
-    dict(
-        type='BerHuLoss',
-        loss_weight=0.3,
-        loss_name='loss_depth_berhu',
-        threshold=0.2,  # 작은 오차는 L1, 큰 오차는 L2
-    )
+    
+        dict(type='L1Loss', loss_weight=1.0, min_depth=0.1),
+    dict(type='GradientLoss', loss_weight=0.5,  min_depth=0.1)
+    
 ]
+
 ),
     # MTL 설정 전달
     mtl_config=mtl_config,
@@ -159,7 +154,7 @@ model = dict(
 # ============================================================================
 # 추가 설정
 # ============================================================================
-work_dir = './work_dirs/chamnet_mtl_manual_1_5_last_ch128_int'  # CLI로 자동 override됨
+work_dir = './work_dirs/chamnet_segformer_dwa_l1+GL'  # CLI로 자동 override됨
 
 # Visualization 완전 비활성화 (키 자체 제거)
 # - 학습 속도 향상 + 디스크 공간 절약 + mmseg 의존성 오류 방지
@@ -168,3 +163,29 @@ work_dir = './work_dirs/chamnet_mtl_manual_1_5_last_ch128_int'  # CLI로 자동 
 
 load_from = None
 resume = False
+
+'''# 실험 1: 현재 (베이스라인)
+loss_decode=[
+    dict(type='L1Loss', loss_weight=1.0, min_depth=0.1),
+]
+
+# 실험 2: L1 + BerHu
+loss_decode=[
+    dict(type='L1Loss', loss_weight=1.0, min_depth=0.1),
+    dict(type='BerHuLoss', loss_weight=0.3, threshold=0.2, min_depth=0.1),
+]
+
+# 실험 3: L1 + Gradient
+loss_decode=[
+    dict(type='L1Loss', loss_weight=1.0, min_depth=0.1),
+    dict(type='GradientLoss', loss_weight=0.5, min_depth=0.1),
+]
+
+# 실험 4: L1 + BerHu + Gradient (종합)
+loss_decode=[
+    dict(type='L1Loss', loss_weight=1.0, min_depth=0.1),
+    dict(type='BerHuLoss', loss_weight=0.3, threshold=0.2, min_depth=0.1),
+    dict(type='GradientLoss', loss_weight=0.5, min_depth=0.1),
+]'''
+
+''' Loss 조합에 따른 차이는 미미하였음 ```

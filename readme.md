@@ -1,6 +1,9 @@
 # ChamNet: 사족보행로봇의 온실 환경 주행을 위한 멀티태스크 러닝 기반 의미론적 분할 및 깊이 추정 연구
 
-MMSegmentation과 MMDeploy 기반의 농업 환경에서 의미론적 분할(Semantic Segmentation)과 깊이 추정(Depth Estimation)을 동시에 수행하는 Multi-Task Learning 프레임워크입니다.
+##  3080 - model branch , aruco -  아루코 탐지 및 깊이 측정 branch , orin - SVO 녹화 및 추론 branch, data_processor - 전처리 브랜치 
+
+
+## MMSegmentation과 MMDeploy 기반의 농업 환경에서 의미론적 분할(Semantic Segmentation)과 깊이 추정(Depth Estimation)을 동시에 수행하는 Multi-Task Learning 프레임워크입니다.
 
 ## 개요
 
@@ -218,7 +221,7 @@ Total Loss = w_seg × (CE + Dice) + w_depth × (SILog + BerHu)
 
 ## 데이터셋 형식
 
-예상되는 디렉토리 구조:
+예상 디렉토리 구조:
 
 ```
 dataset/
@@ -239,46 +242,3 @@ dataset/
 
 ---
 
-## 결과
-
-ChamData 검증 세트에서의 성능:
-
-| 모델 | 백본 | mIoU (%) | abs_rel | RMSE | FPS (GPU) | FLOPs (G) |
-|------|------|----------|---------|------|-----------|-----------|
-| ChamNet-MTL | SegFormer-B0 | TBD | TBD | TBD | TBD | TBD |
-
-*학습 완료 후 결과가 업데이트됩니다.*
-
----
-
-## 인용
-
-연구에서 이 코드를 사용하는 경우 다음과 같이 인용해 주세요:
-
-```bibtex
-@inproceedings{chamnet2024,
-  title={ChamNet: Multi-Task Learning for Agricultural Scene Understanding},
-  author={Your Name},
-  year={2024}
-}
-```
-
----
-
-## 라이선스
-
-이 프로젝트는 MMSegmentation과 MMDeploy를 기반으로 합니다. 각각의 라이선스를 참조하세요.
-
----
-
-## 감사의 글
-
-- [MMSegmentation](https://github.com/open-mmlab/mmsegmentation) - 프레임워크 기반
-- [MMDeploy](https://github.com/open-mmlab/mmdeploy) - 모델 배포 툴킷
-- [SegFormer](https://github.com/NVlabs/SegFormer) - 백본 아키텍처
-
----
-
-## 문의
-
-질문이나 이슈가 있는 경우 이 저장소에 이슈를 등록해 주세요.

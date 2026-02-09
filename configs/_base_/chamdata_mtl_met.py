@@ -1,41 +1,52 @@
-# dataset settings - Multi-Task Learning (Segmentation + Depth)
+# chamdata_mtl.py
+# MDE + Segmentation Multi-Task Learning 데이터셋 설정 파일
+
+# 1. 기본 설정
 dataset_type = 'MTLChamDataset'
 data_root = 'dataset'
 
-# MTL 파이프라인 수정
+# ==============================================================================
+# 2. 파이프라인 설정 (핵심 수정: Normalize 제거)
+# ==============================================================================
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
-    # 1. LoadDepthAnnotation -> MTLLoadDepthAnnotation으로 변경
-    dict(type='MTLLoadDepthAnnotation'), 
+    dict(type='MTLLoadDepthAnnotation'), # .npy 파일 로드 (미터 단위 그대로 유지)
     dict(type='Resize', scale=(512, 512), keep_ratio=False),
-    # 2. 모델이 학습하기 좋게 0~1 사이로 깎아주는 단계 추가 (필수!)
-    dict(type='MTLNormalizeDepth', max_depth=10.0), 
+    
+    # [수정됨] Metric Depth 학습을 위해 Normalize 제거
+    # 이 줄이 없어야 모델이 "0.5"가 아닌 "5.0m"를 배웁니다.
+    # dict(type='MTLNormalizeDepth', max_depth=10.0), 
+    
     dict(type='PackMTLSegInputs'),
 ]
 
 val_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
-    # 여기도 동일하게 MTLLoadDepthAnnotation
-    dict(type='MTLLoadDepthAnnotation'), 
+    dict(type='MTLLoadDepthAnnotation'),
     dict(type='Resize', scale=(512, 512), keep_ratio=False),
-    # 여기도 동일하게 MTLNormalizeDepth
-    dict(type='MTLNormalizeDepth', max_depth=10.0), 
+    
+    # [수정됨] 검증 때도 미터 단위 그대로 비교해야 하므로 제거
+    # dict(type='MTLNormalizeDepth', max_depth=10.0),
+    
     dict(type='PackMTLSegInputs'),
 ]
 
 test_pipeline = val_pipeline
 
-# --- dataloaders ---
+# ==============================================================================
+# 3. 데이터로더 설정
+# ==============================================================================
 train_dataloader = dict(
-    batch_size=4,  # MTL은 메모리를 더 사용
+    batch_size=4,
     num_workers=4,
     persistent_workers=True,
     sampler=dict(type='InfiniteSampler', shuffle=True),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
+        # 학습 데이터 확장자 설정 (사용자 환경 기준)
         img_suffix='.png',
         seg_map_suffix='_mask.png',
         depth_map_suffix='_depth.npy',
@@ -55,7 +66,8 @@ val_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        img_suffix='.jpg',  # Valid는 jpg
+        # 검증 데이터 확장자 설정 (User: .jpg)
+        img_suffix='.jpg',
         seg_map_suffix='_mask.png',
         depth_map_suffix='_depth.npy',
         serialize_data=False,
@@ -74,6 +86,7 @@ test_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
+        # 테스트 데이터 확장자 설정 (User: .jpg)
         img_suffix='.jpg',
         seg_map_suffix='_mask.png',
         depth_map_suffix='_depth.npy',
@@ -85,17 +98,27 @@ test_dataloader = dict(
         ),
         pipeline=test_pipeline))
 
-# MTL 평가 메트릭
+# ==============================================================================
+# 4. 평가 메트릭 설정 (유효 픽셀 필터링)
+# ==============================================================================
 val_evaluator = [
+    # Segmentation 평가
     dict(type='IoUMetric', iou_metrics=['mIoU'], prefix='seg'),
+    
+    # Depth 평가
     dict(
         type='DepthMetric',
         depth_metrics=['abs_rel', 'sq_rel', 'rmse', 'rmse_log', 'd1', 'd2', 'd3'],
-        min_depth_eval=0.001,
+
+        # [핵심] 학습 범위(0.1~10.0m)와 평가 범위를 일치시킴 (정합성 확보)
+        # - min_depth_eval=0.1: 학습하지 않은 Dead Zone(0.001~0.1m) 제외
+        # - max_depth_eval=10.0: 센서 노이즈(10m 초과) 제외
+        # - 실제 데이터: 0~0.1m 구간은 전체의 0.04%로 영향 미미
+        min_depth_eval=0.1,
         max_depth_eval=10.0,
+
         prefix='depth'
     )
 ]
 
 test_evaluator = val_evaluator
-
